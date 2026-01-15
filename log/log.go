@@ -91,6 +91,7 @@ func (l *Logger) thisOrDefault() *Logger {
 func (l *Logger) WithNamespaceAppended(n string) *Logger {
 	l = l.thisOrDefault()
 
+	// 追加命名空间，以 / 方式分隔
 	ns := l.namespace
 	if ns != "" {
 		ns += "/"

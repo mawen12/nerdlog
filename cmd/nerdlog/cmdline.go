@@ -15,7 +15,9 @@ import (
 
 // NOTE: handleCmd is always called from the tview's event loop, so it's safe
 // to use all UI primitives and nerdlogApp etc.
+// 处理命令
 func (app *nerdlogApp) handleCmd(cmd string) {
+	
 	parts := strings.Fields(cmd)
 	if len(parts) == 0 {
 		return

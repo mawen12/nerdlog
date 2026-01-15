@@ -6,6 +6,7 @@ import (
 	"github.com/juju/errors"
 )
 
+// time STICKY, message, lstream, *
 var DefaultSelectQuery SelectQuery = FieldNameTime + " STICKY, " + FieldNameMessage + ", lstream, *"
 
 const (
@@ -119,9 +120,11 @@ func ParseSelectQuery(sq SelectQuery) (*SelectQueryParsed, error) {
 	return ret, nil
 }
 
+// 将 SelectQueryParsed => SelectQuery，其中添加了 AS，STICKY，*
 func (sqp *SelectQueryParsed) Marshal() SelectQuery {
-	var sb strings.Builder
+	var sb strings.Builder // 使用 Builder 来高效化
 
+	// 追加字符串，对于后续追加的，使用, 分隔
 	add := func(i int, s string) {
 		if i != 0 {
 			sb.WriteString(", ")
@@ -131,25 +134,30 @@ func (sqp *SelectQueryParsed) Marshal() SelectQuery {
 	}
 
 	var n int
+	// 迭代查询字段
 	for i, fld := range sqp.Fields {
+		// 获取字段名称
 		v := fld.Name
-
+		// 如果展示和实际不符，则添加 AS
 		if fld.DisplayName != fld.Name {
 			v += " AS " + fld.DisplayName
 		}
-
+		// 如果需要固定，则追加 STICKY
 		if fld.Sticky {
 			v += " STICKY"
 		}
 
+		// 添加写入
 		add(i, v)
 		n = i
 	}
 
+	// 如果设置了包含所有，则在末尾追加 *
 	if sqp.IncludeAll {
 		add(n, "*")
 		n++
 	}
 
+	// 构造 Select Query
 	return SelectQuery(sb.String())
 }

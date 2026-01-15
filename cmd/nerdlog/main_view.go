@@ -218,7 +218,9 @@ var (
 			Bold(false)
 )
 
+// 创建主页面
 func NewMainView(params *MainViewParams) *MainView {
+	// logger 指定当前命名空间为 MainView
 	params.Logger = params.Logger.WithNamespaceAppended("MainView")
 
 	mv := &MainView{
@@ -226,12 +228,14 @@ func NewMainView(params *MainViewParams) *MainView {
 	}
 
 	var err error
+	// 解析 SelectQuery
 	mv.selectQuery, err = ParseSelectQuery(DefaultSelectQuery)
 	if err != nil {
 		panic(err.Error())
 	}
 
 	// Remember screen size before every draw.
+	// 记录当前的屏幕尺寸
 	mv.params.App.SetBeforeDrawFunc(func(screen tcell.Screen) bool {
 		width, height := screen.Size()
 		mv.screenWidth = width
@@ -239,14 +243,19 @@ func NewMainView(params *MainViewParams) *MainView {
 		return false
 	})
 
+	// 创建页面
 	mv.rootPages = tview.NewPages()
 
+	// display: flex; flex-direction: row;
 	mainFlex := tview.NewFlex().SetDirection(tview.FlexRow)
 
+	// TextView
 	mv.queryLabel = tview.NewTextView()
+	// 动态颜色，不允许滚动，文本内容为：awk pattern:
 	mv.queryLabel.SetDynamicColors(true).SetScrollable(false).SetText(queryLabelMatch)
-
+	// Input
 	mv.queryInput = tview.NewInputField()
+	// 处理事件
 	mv.queryInput.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		event = mv.eventHandlerBrowserLike(event)
 		if event == nil {
@@ -254,7 +263,9 @@ func NewMainView(params *MainViewParams) *MainView {
 		}
 
 		switch event.Key() {
+		// Enter 回车事件
 		case tcell.KeyEnter:
+			// 将文件框中输入的内容写入到查询
 			mv.setQuery(mv.queryInput.GetText())
 			mv.bumpTimeRange(false)
 
@@ -290,7 +301,7 @@ func NewMainView(params *MainViewParams) *MainView {
 
 			mv.queryInputApplyStyle()
 			return nil
-
+		// Esc 退出事件
 		case tcell.KeyEsc:
 			//if mv.queryInput.GetText() != mv.query {
 			//mv.queryInput.SetText(mv.query)
@@ -298,15 +309,15 @@ func NewMainView(params *MainViewParams) *MainView {
 			//}
 			mv.params.App.SetFocus(mv.logsTable)
 			return nil
-
+		// Tab 事件
 		case tcell.KeyTab:
 			mv.params.App.SetFocus(mv.queryEditBtn)
 			return nil
-
+		// Back 事件
 		case tcell.KeyBacktab:
 			mv.params.App.SetFocus(mv.logsTable)
 			return nil
-
+		// Ctrl+P, UP, Ctrl+N, DOWN 事件
 		case tcell.KeyCtrlP, tcell.KeyUp, tcell.KeyCtrlN, tcell.KeyDown:
 			var item clhistory.Item
 			qf := QueryFull{
@@ -1959,12 +1970,18 @@ func (mv *MainView) focusAfterPageRemoval(pageName string) {
 	}
 }
 
+// 构建完整的查询，包含时间范围、目标、查询条件，查询结果展示配置
 func (mv *MainView) getQueryFull() QueryFull {
+	// 指定时间范围
 	ftr := FromToRange{mv.from, mv.to}
 	return QueryFull{
-		Time:        ftr.String(),
-		Query:       mv.query,
-		LStreams:    mv.lstreamsSpec,
+		// 时间范围
+		Time: ftr.String(),
+		// 实际查询
+		Query: mv.query,
+		// LogStreams
+		LStreams: mv.lstreamsSpec,
+		// 将 SelectQueryParsed => SelectQuery，其中添加了 AS，STICKY，*
 		SelectQuery: mv.selectQuery.Marshal(),
 	}
 }

@@ -13,14 +13,18 @@ import (
 )
 
 type CLHistory struct {
+	// 参数，保存了文件名称
 	params CLHistoryParams
 
+	// 历史记录
 	items []Item
 
 	// curHistIdx is used when navigating the history using Prev / Next.
 	// When navigating isn't in progress (after a new item was added using Add),
 	// it's reset to -1.
-	curHistIdx        int
+	// 用于通过Prev / Next 导航历史记录，当导航操作未进行时，即被设置为-1
+	curHistIdx int
+	// 最后操作的元素
 	lastEphemeralItem Item
 }
 
@@ -52,23 +56,29 @@ func New(params CLHistoryParams) (*CLHistory, error) {
 
 // Load loads all history from the file. If Filename in params is empty,
 // Load is a no-op.
+// Load 从文件中读取所有历史记录，如果文件名称未指定，则加载为空操作
 func (h *CLHistory) Load() error {
+	// 文件名称未指定，直接退出
 	if h.params.Filename == "" {
 		return nil
 	}
 
+	// 打开文件
 	f, err := os.Open(h.params.Filename)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	// 创建历史记录解码器
 	decoder := NewHistoryDecoder(f)
+	// 解码历史记录
 	loadedItems, err := decoder.Decode()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	h.items = loadedItems
+
 	h.resetHistoryNavigation()
 
 	return nil
@@ -156,6 +166,7 @@ func (h *CLHistory) startHistoryNavigation(s string) {
 	h.lastEphemeralItem = Item{Str: s}
 }
 
+// 重置导航进度
 func (h *CLHistory) resetHistoryNavigation() {
 	h.curHistIdx = -1
 	h.lastEphemeralItem = Item{}

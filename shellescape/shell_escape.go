@@ -7,11 +7,15 @@ import (
 	"github.com/juju/errors"
 )
 
+// 规范化，并拼接为string
 func Escape(parts []string) string {
+	// 保存转义后或无需转义
 	eParts := make([]string, 0, len(parts))
 
 	for _, part := range parts {
+		// 检查当前部分是否为合法字符串，规则为：字母 数字 - _ . /
 		needEscape := false
+		// 依次检查
 		for _, r := range part {
 			if !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '-' && r != '_' && r != '.' && r != '/' {
 				needEscape = true
@@ -19,16 +23,20 @@ func Escape(parts []string) string {
 			}
 		}
 
+		// 长度为0,也需要转换
 		if len(part) == 0 {
 			needEscape = true
 		}
 
 		if needEscape {
+			// 两侧加上 ''，然后将 ' 进行转义为 '\"'\"'
 			part = "'" + strings.Replace(part, "'", "'\"'\"'", -1) + "'"
 		}
+		// 写入处理后的数组中
 		eParts = append(eParts, part)
 	}
 
+	// 使用空格拼接
 	return strings.Join(eParts, " ")
 }
 

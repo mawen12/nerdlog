@@ -18,12 +18,14 @@ const inputTimeLayout = "Jan2 15:04"
 const inputTimeLayoutMMHH = "15:04"
 
 func main() {
+	// 读取用户目录 ~
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error getting home dir: %s\n", err)
 		os.Exit(1)
 	}
 
+	// 默认读取 ~/.ssh/id_ed25519 | id_ecdsa | id_rsa
 	defaultSSHKeys := []string{
 		filepath.Join(homeDir, ".ssh", "id_ed25519"),
 		filepath.Join(homeDir, ".ssh", "id_ecdsa"),
@@ -54,11 +56,13 @@ func main() {
 
 	pflag.Parse()
 
+	// 输出版本信息然后退出
 	if *flagVersion {
 		fmt.Print(version.VersionFullDescr())
 		os.Exit(0)
 	}
 
+	// 读取查询历史记录
 	queryCLHistory, err := clhistory.New(clhistory.CLHistoryParams{
 		Filename: *flagQueryHistoryFile,
 	})
@@ -67,6 +71,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 初始化默认参数
 	initialTime := "-1h"
 	initialLStreams := "localhost"
 	if runtime.GOOS == "windows" {
@@ -98,6 +103,7 @@ func main() {
 		connectRightAway = true
 	}
 
+	// 初始化查询
 	initialQueryData := QueryFull{
 		Time:        initialTime,
 		Query:       initialQuery,
@@ -105,6 +111,7 @@ func main() {
 		SelectQuery: initialSelectQuery,
 	}
 
+	// 当未给定参数时，从历史记录中读取来填充查询
 	if !connectRightAway {
 		// No query params were given, try to get the last one from the history.
 		item, _ := queryCLHistory.Prev("")
@@ -119,10 +126,12 @@ func main() {
 		}
 	}
 
+	// 剪切板可用检查，如果报错，则控制台输出，但是不退出
 	if clipboard.InitErr != nil {
 		fmt.Printf("NOTE: X Clipboard is not available: %s\n", clipboard.InitErr.Error())
 	}
 
+	// 设置日志级别，将字符串映射为对应日志级别
 	logLevel := log.Info
 	if *flagLogLevel == "error" {
 		logLevel = log.Error
@@ -141,6 +150,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 初始化 app
 	app, err := newNerdlogApp(
 		nerdlogAppParams{
 			initialOptionSets:    *flagSet,
@@ -162,6 +172,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 启动 UI 界面
 	fmt.Println("Starting UI ...")
 	if err := app.runTViewApp(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
@@ -170,6 +181,7 @@ func main() {
 
 	// We end up here when the user quits the UI
 
+	// 退出 UI 界面
 	fmt.Println("")
 	fmt.Println("Closing connections...")
 

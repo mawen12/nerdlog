@@ -7,6 +7,8 @@ import (
 
 // QueryFull contains everything that defines a query: the logstreams filter, time range,
 // and the query to filter logs.
+// 代表一个查询，组成有：logstreams, time, query
+
 type QueryFull struct {
 	LStreams string
 	Time     string
@@ -23,10 +25,16 @@ var execName = "nerdlog"
 //	nerdlog --lstreams <value> --time <value> --pattern <value>
 //
 // Therefore, there are 7 parts.
+// 定义了一个 shell-command 中有几个部分，如下，一共7个部分，格式如下：
+// nerdlog --lstreams <value> --time <value> --pattern <value>
+// TODO Fix 出现了描述不一致的场景，描述中只有7处，实际有9处，默认有 --selquery
 var numShellParts = 1 + 3*2
 
+// 将 QueryFull 转换为原始的shell命令
 func (qf *QueryFull) MarshalShellCmd() string {
+	// 将 QueryFull 转换为原始字符串数组
 	parts := qf.MarshalShellCmdParts()
+	// 非法字符转义，并拼接为字符串，即shell命令
 	return shellescape.Escape(parts)
 }
 
@@ -43,13 +51,20 @@ func (qf *QueryFull) UnmarshalShellCmd(cmd string) error {
 	return nil
 }
 
+// 将 QueryFull 转换为原始字符串数组
 func (qf *QueryFull) MarshalShellCmdParts() []string {
+	// 设置7个大小的slice
 	parts := make([]string, 0, numShellParts)
 
+	// [0] = nerlog
 	parts = append(parts, execName)
+	// [1] = --lstreams [2] = logStream
 	parts = append(parts, "--lstreams", qf.LStreams)
+	// [3] = --time [4] = time
 	parts = append(parts, "--time", qf.Time)
+	// [5] = --patten [6] = query
 	parts = append(parts, "--pattern", qf.Query)
+	// [7] = --selquery --selquery [8] = Select Query
 	parts = append(parts, "--selquery", string(qf.SelectQuery))
 
 	return parts

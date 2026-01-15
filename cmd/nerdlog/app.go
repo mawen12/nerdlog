@@ -73,13 +73,16 @@ type cmdWithOpts struct {
 func newNerdlogApp(
 	params nerdlogAppParams, queryCLHistory *clhistory.CLHistory,
 ) (*nerdlogApp, error) {
+	// 初始化日志
 	logger := log.NewLogger(params.logLevel)
 
+	// 读取用户目录
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return nil, errors.Annotatef(err, "getting home dir")
 	}
 
+	// 读取 cmd 历史记录
 	cmdLineHistory, err := clhistory.New(clhistory.CLHistoryParams{
 		Filename: params.cmdHistoryFile,
 	})
@@ -90,44 +93,62 @@ func newNerdlogApp(
 	app := &nerdlogApp{
 		params: params,
 
+		// 配置信息
 		options: NewOptionsShared(Options{
-			Timezone:             time.Local,
-			MaxNumLines:          250,
+			// 时区
+			Timezone: time.Local,
+			// 默认取250条日志记录
+			MaxNumLines: 250,
+			// 默认使用 ssh-lib 来进行文件
 			DefaultTransportMode: core.NewTransportModeSSHLib(),
 		}),
 
+		// 创建可视化终端
 		tviewApp: tview.NewApplication(),
 
+		// 命令行历史记录
 		cmdLineHistory: cmdLineHistory,
+		// 浏览器风格的历史记录
 		queryBLHistory: blhistory.New(),
+		// 查询历史记录
 		queryCLHistory: queryCLHistory,
 	}
 
+	// channels 异步
 	cmdCh := make(chan cmdWithOpts, 8)
 
+	// 创建主页面
 	app.mainView = NewMainView(&MainViewParams{
 		App:     app.tviewApp,
 		Options: app.options,
+		// 日志查询触发
 		OnLogQuery: func(params core.QueryLogsParams) {
+			// 获取可读取的最大行，默认为 250
 			params.MaxNumLines = app.options.GetMaxNumLines()
 
 			// Get the current QueryFull and marshal it to a shell command.
+			// 获取当前 QueryFull，并将其序列化为 shell 命令
 			qf := app.mainView.getQueryFull()
+			// 将 QueryFull 转换为原始的shell命令
 			qfStr := qf.MarshalShellCmd()
 
 			// Add this query shell command to the commandline-like history.
+			// 将查询 shell 命令添加到命令行历史
 			app.queryCLHistory.Add(qfStr)
 
 			// If needed, also add it to the browser-like history.
+			// 当该命令与上次不一致时，追加到类browser历史
 			if qf != app.lastQueryFull {
 				app.lastQueryFull = qf
+				// 仅在允许添加时，才会添加
 				if !params.DontAddHistoryItem {
 					app.queryBLHistory.Add(qfStr)
 				}
 			}
-
+			// 发送查询日志请求（async）
 			app.lsman.QueryLogs(params)
 		},
+		// log stream 变更
 		OnLStreamsChange: func(lstreamsSpec string) error {
 			err := app.lsman.SetLStreams(lstreamsSpec)
 			if err != nil {
@@ -136,13 +157,17 @@ func newNerdlogApp(
 
 			return nil
 		},
+		// 页面点击断开连接时触发
 		OnDisconnectRequest: func() {
 			app.lsman.Disconnect()
 		},
+		// 页面点击重连时触发
 		OnReconnectRequest: func() {
 			app.lsman.Reconnect()
 		},
+		// 处理命令
 		OnCmd: func(cmd string, opts CmdOpts) {
+			// 构造命令选项，并添加到 cmdCh channel
 			cmdCh <- cmdWithOpts{
 				cmd:  cmd,
 				opts: opts,
@@ -156,6 +181,7 @@ func newNerdlogApp(
 	})
 
 	// NOTE: initLStreamsManager has to be called _after_ app.mainView is initialized.
+	// 初始化 log streams manager
 	if err := app.initLStreamsManager(params, "", app.options.GetTransportMode(), homeDir, logger); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -165,6 +191,7 @@ func newNerdlogApp(
 	// we call the applyQueryEditData below, so that if some options affect how
 	// the connection works, then we already have the LStreamsManager to apply it
 	// to, but no connections were made yet.
+	// 设置选项
 	for _, expr := range params.initialOptionSets {
 		setRes, err := app.setOption(expr)
 		if err != nil {
@@ -215,7 +242,9 @@ func (app *nerdlogApp) initLStreamsManager(
 	homeDir string,
 	logger *log.Logger,
 ) error {
+	// logstreams manager 更新事件
 	updatesCh := make(chan core.LStreamsManagerUpdate, 128)
+	// 启动 goroutine
 	go func() {
 		// We don't want to necessarily update UI on _every_ state update, since
 		// they might be getting a lot of those messages due to those progress
@@ -318,9 +347,11 @@ func (app *nerdlogApp) initLStreamsManager(
 		}
 	}()
 
+	// 读取 USER 变量
 	envUser := os.Getenv("USER")
 
 	var logstreamsCfg core.ConfigLogStreams
+	// 从指定配置路径加载logstreams配置
 	if params.logstreamsConfigPath != "" {
 		appLogstreamsCfg, err := LoadLogstreamsConfigFromFile(params.logstreamsConfigPath)
 		if err != nil {
@@ -336,6 +367,7 @@ func (app *nerdlogApp) initLStreamsManager(
 		}
 	}
 
+	// 从指定路径加载 ssh config
 	var sshConfig *ssh_config.Config
 	if params.sshConfigPath != "" {
 		sshConfigFile, err := os.Open(params.sshConfigPath)
@@ -378,6 +410,7 @@ func (app *nerdlogApp) initLStreamsManager(
 		}
 	}
 
+	// 初始化 logstreams manager
 	app.lsman = core.NewLStreamsManager(core.LStreamsManagerParams{
 		Logger: logger,
 
@@ -399,6 +432,7 @@ func (app *nerdlogApp) initLStreamsManager(
 }
 
 func (app *nerdlogApp) handleCmdLine(cmdCh <-chan cmdWithOpts) {
+	// 循环读取 cmd
 	for {
 		cwo := <-cmdCh
 		app.tviewApp.QueueUpdateDraw(func() {

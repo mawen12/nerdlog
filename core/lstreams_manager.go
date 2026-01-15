@@ -93,15 +93,19 @@ type LStreamsManagerParams struct {
 	Clock clock.Clock
 }
 
+// 初始化 Log stream 管理器
 func NewLStreamsManager(params LStreamsManagerParams) *LStreamsManager {
+	// 检查时钟
 	if params.Clock == nil {
 		// For details on why not default to the real clock:
 		// https://dmitryfrank.com/articles/mocking_time_in_go#caveat_with_defaulting_to_real_clock
 		panic("Clock is nil")
 	}
 
+	// 配置LSMan命名空间的日志
 	params.Logger = params.Logger.WithNamespaceAppended("LSMan")
 
+	// 初始化管理器
 	lsman := &LStreamsManager{
 		params: params,
 
@@ -112,8 +116,10 @@ func NewLStreamsManager(params LStreamsManagerParams) *LStreamsManager {
 		lscPendingTeardown: map[string]int{},
 
 		lstreamUpdatesCh: make(chan *LStreamClientUpdate, 1024),
-		reqCh:            make(chan lstreamsManagerReq, 8),
-		respCh:           make(chan lstreamCmdRes),
+		// 请求channel，接收从该client发送的查询请求
+		reqCh: make(chan lstreamsManagerReq, 8),
+		// 响应channel
+		respCh: make(chan lstreamCmdRes),
 
 		teardownReqCh: make(chan struct{}, 1),
 		torndownCh:    make(chan struct{}, 1),
@@ -360,6 +366,7 @@ func (lsman *LStreamsManager) run() {
 				lsman.sendStateUpdate()
 			}
 
+		// 查询请求
 		case req := <-lsman.reqCh:
 			switch {
 			case req.queryLogs != nil:
@@ -471,8 +478,10 @@ func (lsman *LStreamsManager) run() {
 
 				r.resCh <- struct{}{}
 
+			// ping 请求
 			case req.ping:
 				for _, lsc := range lsman.lscs {
+					// ping 入队
 					lsc.EnqueueCmd(lstreamCmd{
 						ping: &lstreamCmdPing{},
 					})
@@ -493,13 +502,16 @@ func (lsman *LStreamsManager) run() {
 				// Reconnect for every LStreamClient just above, their statuses are changing
 				// already, but we don't know it yet (we'll know once we receive updates
 				// in this same event loop, and _then_ we'll update all the data etc).
-
+			// 断开连接请求
 			case req.disconnect:
+				// 打印日志
 				lsman.params.Logger.Infof("Disconnect command")
+				//
 				if lsman.curQueryLogsCtx != nil {
 					lsman.params.Logger.Infof("Forgetting the in-progress query")
 					lsman.curQueryLogsCtx = nil
 				}
+				// 置空
 				lsman.setLStreams("")
 
 				lsman.updateHAs()
@@ -507,27 +519,34 @@ func (lsman *LStreamsManager) run() {
 				lsman.sendStateUpdate()
 			}
 
+		// 接收请求的响应
 		case resp := <-lsman.respCh:
+			// 写入 verbose1 日志
 			lsman.params.Logger.Verbose1f("Got a response from %v: %+v", resp.hostname, resp)
 
 			switch {
 			case lsman.curQueryLogsCtx != nil:
+				// 存在报错，则写入日志并记录
 				if resp.err != nil {
 					lsman.params.Logger.Errorf("Got an error response from %v: %s", resp.hostname, resp.err)
 					lsman.curQueryLogsCtx.errs[resp.hostname] = resp.err
 				}
 
+				// 根据响应类型进行处理
 				switch v := resp.resp.(type) {
 				case *LogResp:
 					lsman.curQueryLogsCtx.resps[resp.hostname] = v
 
 					// If we collected responses from all nodes, handle them.
+					// 如果已经从所有的节点获取了信息，则开始处理
 					if len(lsman.curQueryLogsCtx.resps) == len(lsman.lscs) {
+						// 写入 verbose1 日志
 						lsman.params.Logger.Verbose1f(
 							"Got logs from %v, this was the last one, query is completed",
 							resp.hostname,
 						)
 
+						// 合并日志响应，并发送到 UI
 						lsman.mergeLogRespsAndSend()
 
 						lsman.curQueryLogsCtx = nil
@@ -646,7 +665,9 @@ type lstreamsManagerReqSetDefaultTransportMode struct {
 }
 
 func (lsman *LStreamsManager) QueryLogs(params QueryLogsParams) {
+	// 以 verbose1 级别写入到日志中
 	lsman.params.Logger.Verbose1f("QueryLogs: %+v", params)
+	// 写入到 req channel 中
 	lsman.reqCh <- lstreamsManagerReq{
 		queryLogs: &params,
 	}
@@ -672,12 +693,14 @@ func (lsman *LStreamsManager) Ping() {
 }
 
 func (lsman *LStreamsManager) Reconnect() {
+	// 发送重新连接请求
 	lsman.reqCh <- lstreamsManagerReq{
 		reconnect: true,
 	}
 }
 
 func (lsman *LStreamsManager) Disconnect() {
+	// 发送断开连接请求
 	lsman.reqCh <- lstreamsManagerReq{
 		disconnect: true,
 	}
@@ -826,9 +849,12 @@ func (lsman *LStreamsManager) sendLogRespUpdate(resp *LogRespTotal) {
 }
 
 func (lsman *LStreamsManager) mergeLogRespsAndSend() {
+	// 获取所有的响应
 	resps := lsman.curQueryLogsCtx.resps
+	// 获取所有的错误
 	errs := lsman.curQueryLogsCtx.errs
 
+	// 处理错误，
 	if len(errs) != 0 {
 		errs2 := make([]error, 0, len(errs))
 		for hostname, err := range errs {
@@ -839,6 +865,7 @@ func (lsman *LStreamsManager) mergeLogRespsAndSend() {
 			return errs2[i].Error() < errs2[j].Error()
 		})
 
+		// 发送响应
 		lsman.sendLogRespUpdate(&LogRespTotal{
 			Errs: errs2,
 		})
