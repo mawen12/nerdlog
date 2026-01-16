@@ -34,17 +34,23 @@ func main() {
 
 	var (
 		flagVersion = pflag.BoolP("version", "v", false, "Print version info and exit")
-
-		flagTime             = pflag.StringP("time", "t", "", "Time range in the same format as accepted by the UI. Examples: '1h', 'Mar27 12:00'")
-		flagLStreamsConfig   = pflag.String("lstreams-config", filepath.Join(homeDir, ".config", "nerdlog", "logstreams.yaml"), "logstreams config file to use; set to an empty string to disable reading logstreams config")
-		flagCmdHistoryFile   = pflag.String("cmdhistory-file", filepath.Join(homeDir, ".nerdlog_history"), "Command-line history file")
+		// 查询时间，支持相对时间和指定时间，例如：--time -1h
+		flagTime           = pflag.StringP("time", "t", "", "Time range in the same format as accepted by the UI. Examples: '1h', 'Mar27 12:00'")
+		flagLStreamsConfig = pflag.String("lstreams-config", filepath.Join(homeDir, ".config", "nerdlog", "logstreams.yaml"), "logstreams config file to use; set to an empty string to disable reading logstreams config")
+		// 
+		flagCmdHistoryFile = pflag.String("cmdhistory-file", filepath.Join(homeDir, ".nerdlog_history"), "Command-line history file")
+		// 其内部存储了如下信息：:1768526631165763989:136:0:nerdlog --lstreams 'localhost:22:/home/mawen/logs/monitor.log' --time -1h --pattern /port/ --selquery 'time STICKY, message, lstream, *'
+		// 这是完整的查询
 		flagQueryHistoryFile = pflag.String("queryhistory-file", filepath.Join(homeDir, ".nerdlog_query_history"), "Query history file")
-		flagLStreams         = pflag.StringP("lstreams", "h", "", "Logstreams to connect to, as comma-separated glob patterns, e.g. 'foo-*,bar-*'")
-		flagQuery            = pflag.StringP("pattern", "p", "", "Initial awk pattern to use")
-		flagSelectQuery      = pflag.StringP("selquery", "s", "", "SELECT-like query to specify which fields to show, like 'time STICKY, message, lstream, level_name AS level, *'")
-		flagLogLevel         = pflag.String("loglevel", "error", "This is NOT about the logs that nerdlog fetches from the remote servers, it's rather about nerdlog's own log. Valid values are: error, warning, info, verbose1, verbose2 or verbose3")
-		flagSSHConfig        = pflag.String("ssh-config", filepath.Join(homeDir, ".ssh", "config"), "ssh config file to use; set to an empty string to disable reading ssh config")
-		flagSSHKeys          = pflag.StringSlice("ssh-key", defaultSSHKeys, "ssh keys to use; only the first existing file will be used")
+		// log streams，指定要读取的目标日志信息，例如：--lstreams 'localhost:22:journalctl'
+		flagLStreams = pflag.StringP("lstreams", "h", "", "Logstreams to connect to, as comma-separated glob patterns, e.g. 'foo-*,bar-*'")
+		// awk 查询，例如：--pattern /INFO/
+		flagQuery = pflag.StringP("pattern", "p", "", "Initial awk pattern to use")
+		// select 查询，例如：time STICKY, message, lstream, level_name AS level, *
+		flagSelectQuery = pflag.StringP("selquery", "s", "", "SELECT-like query to specify which fields to show, like 'time STICKY, message, lstream, level_name AS level, *'")
+		flagLogLevel    = pflag.String("loglevel", "error", "This is NOT about the logs that nerdlog fetches from the remote servers, it's rather about nerdlog's own log. Valid values are: error, warning, info, verbose1, verbose2 or verbose3")
+		flagSSHConfig   = pflag.String("ssh-config", filepath.Join(homeDir, ".ssh", "config"), "ssh config file to use; set to an empty string to disable reading ssh config")
+		flagSSHKeys     = pflag.StringSlice("ssh-key", defaultSSHKeys, "ssh keys to use; only the first existing file will be used")
 
 		// NOTE: we specifically use StringArray and not StringSlice here, because we
 		// don't want it to interpret commas in the values, like "--set foo=123,bar=234", since
@@ -62,7 +68,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	// 读取查询历史记录
+	// 读取查询历史记录，该记录是用于进行查询的整体整合
 	queryCLHistory, err := clhistory.New(clhistory.CLHistoryParams{
 		Filename: *flagQueryHistoryFile,
 	})
@@ -72,51 +78,53 @@ func main() {
 	}
 
 	// 初始化默认参数
-	initialTime := "-1h"
-	initialLStreams := "localhost"
+	initialTime := "-1h"           // 当未指定时间时，默认读取最近1小时
+	initialLStreams := "localhost" // 当未指定log streams时，默认为localhost，其底层默认从 /var/log/messages 读取
 	if runtime.GOOS == "windows" {
 		// On Windows, "localhost" doesn't make much sense, since there are usually no
 		// plain log files and no journalctl, so using a different default here.
-		initialLStreams = "myserver.com:22"
+		initialLStreams = "myserver.com:22" // 由于 windows 平台没有 plain log file 和 journalctl，因此指定 localhost 在该场景中没有意义
 	}
-	initialQuery := ""
-	initialSelectQuery := DefaultSelectQuery
-	connectRightAway := false
+	initialQuery := ""                       // 初始awk查询为""
+	initialSelectQuery := DefaultSelectQuery // 默认为 time STICKY, message, lstream, *
+	connectRightAway := false                // 立即连接查询标志位
 
 	if *flagTime != "" {
 		initialTime = *flagTime
-		connectRightAway = true
+		connectRightAway = true // 当用户手动指定了查询时间，代表需要立刻执行查询
 	}
 
 	if *flagLStreams != "" {
 		initialLStreams = *flagLStreams
-		connectRightAway = true
+		connectRightAway = true // 当用户手动指定了log stream，代表需要立刻执行查询
 	}
 
 	if *flagQuery != "" {
 		initialQuery = *flagQuery
-		connectRightAway = true
+		connectRightAway = true // 当用户手动指定了awk查询，代表需要立刻执行查询
 	}
 
 	if *flagSelectQuery != "" {
 		initialSelectQuery = SelectQuery(*flagSelectQuery)
-		connectRightAway = true
+		connectRightAway = true // 当用户手动指定了select query查询，代表需要立刻执行查询
 	}
 
-	// 初始化查询
+	// 初始化查询，使用四要素组装
 	initialQueryData := QueryFull{
-		Time:        initialTime,
-		Query:       initialQuery,
-		LStreams:    initialLStreams,
-		SelectQuery: initialSelectQuery,
+		Time:        initialTime,        // time --time
+		Query:       initialQuery,       // awk --pattern
+		LStreams:    initialLStreams,    // log streams --lstreams
+		SelectQuery: initialSelectQuery, // select query --selquery
 	}
 
-	// 当未给定参数时，从历史记录中读取来填充查询
+	// 当不符合立即查询的条件时，即四要素数据均没有指定，则尝试从历史文件 /home/mawen/.nerdlog_query_history 中获取最近一条
 	if !connectRightAway {
 		// No query params were given, try to get the last one from the history.
+		// 获取历史记录中最新的一个
 		item, _ := queryCLHistory.Prev("")
 		if item.Str != "" {
 			var qf QueryFull
+			// 使用str更新到 queryFull，如果没有错误的时候，则更新到initialQueryData中
 			if err := qf.UnmarshalShellCmd(item.Str); err != nil {
 				// Ignore the error, just use the defaults
 			} else {
@@ -131,7 +139,7 @@ func main() {
 		fmt.Printf("NOTE: X Clipboard is not available: %s\n", clipboard.InitErr.Error())
 	}
 
-	// 设置日志级别，将字符串映射为对应日志级别
+	// 设置日志级别，将字符串映射为对应日志级别，对于非法的日志级别，报错并退出
 	logLevel := log.Info
 	if *flagLogLevel == "error" {
 		logLevel = log.Error
@@ -152,6 +160,7 @@ func main() {
 
 	// 初始化 app
 	app, err := newNerdlogApp(
+		// 汇总参数项
 		nerdlogAppParams{
 			initialOptionSets:    *flagSet,
 			initialQueryData:     initialQueryData,
@@ -165,6 +174,7 @@ func main() {
 
 			noJournalctlAccessWarn: *flagNoJournalctlAccessWarn,
 		},
+		// 查询历史
 		queryCLHistory,
 	)
 	if err != nil {

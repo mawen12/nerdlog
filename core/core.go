@@ -86,12 +86,17 @@ type MinuteStatsItem struct {
 	NumMsgs int
 }
 
+// 代表 Logs Table 的一条记录，其被保存在 row 的第一列中
 type LogMsg struct {
-	Time               time.Time
+	// 时间
+	Time time.Time
+	//
 	DecreasedTimestamp bool
 
+	// 日志文件名
 	// LogFilename and LogLinenumber are file ane line number in that file
-	LogFilename   string
+	LogFilename string
+	// 日志行数
 	LogLinenumber int
 
 	// CombinedLinenumber is the line number in pseudo-file: all (actually just
@@ -100,9 +105,12 @@ type LogMsg struct {
 	// which should be used for --lines-until param.
 	CombinedLinenumber int
 
-	Msg     string
+	// 消息
+	Msg string
+	// 内容
 	Context map[string]string
-	Level   LogLevel
+	// 日志级别
+	Level LogLevel
 
 	OrigLine string
 }

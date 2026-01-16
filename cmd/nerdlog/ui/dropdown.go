@@ -15,6 +15,7 @@ import (
 // - Fixed the list drawing issue https://github.com/rivo/tview/issues/726
 // - Added functions to get and set list-open status: IsListOpen, OpenList, CloseList
 // - Added GetList
+// 选项，文本内容，以及被选中后触发的回调
 type dropDownOption struct {
 	Text     string // The text to be displayed in the drop-down.
 	Selected func() // The (optional) callback for when this option was selected.
@@ -24,6 +25,7 @@ type dropDownOption struct {
 // drop-down list when activated.
 //
 // See https://github.com/rivo/tview/wiki/DropDown for an example.
+// 下拉框
 type DropDown struct {
 	*tview.Box
 

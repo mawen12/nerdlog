@@ -17,6 +17,7 @@ import (
 	"github.com/rivo/tview"
 )
 
+// logs 表的时间格式，即展示时间的默认格式，隐藏年
 const logsTableTimeLayout = "Jan02 15:04:05.000"
 
 const (
@@ -41,6 +42,7 @@ type MainViewParams struct {
 
 	// OnLogQuery is called by MainView whenever the user submits a query to get
 	// logs.
+	//
 	OnLogQuery OnLogQueryCallback
 
 	OnLStreamsChange OnLStreamsChange
@@ -166,14 +168,23 @@ type CmdOpts struct {
 	Internal bool
 }
 
+// 当输入查询触发的回调
 type OnLogQueryCallback func(params core.QueryLogsParams)
+
+// 当 log streams 被修改了触发的回调
 type OnLStreamsChange func(lstreamsSpec string) error
+
+// 当断开连接时触发的回调
 type OnDisconnectRequest func()
+
+// 当重新连接时触发的回调
 type OnReconnectRequest func()
 type OnCmdCallback func(cmd string, opts CmdOpts)
 
 var (
-	queryLabelMatch    = "awk pattern:"
+	// awk 匹配时展示的内容
+	queryLabelMatch = "awk pattern:"
+	// awk 不匹配时展示的内容
 	queryLabelMismatch = "awk pattern[yellow::b]*[-::-]"
 
 	queryInputStateMatch = tcell.Style{}.
@@ -182,7 +193,7 @@ var (
 				Bold(true)
 
 	queryInputStateMismatch = tcell.Style{}.
-		//Background(tcell.ColorDarkRed).
+		// Background(tcell.ColorDarkRed).
 		Background(tcell.ColorBlue).
 		Foreground(tcell.ColorWhite).
 		Bold(true)
@@ -220,7 +231,7 @@ var (
 
 // 创建主页面
 func NewMainView(params *MainViewParams) *MainView {
-	// logger 指定当前命名空间为 MainView
+	// logger 指定当前命名空间为 MainView，输出日志时，为 /MainView
 	params.Logger = params.Logger.WithNamespaceAppended("MainView")
 
 	mv := &MainView{
@@ -228,7 +239,7 @@ func NewMainView(params *MainViewParams) *MainView {
 	}
 
 	var err error
-	// 解析 SelectQuery
+	// 解析 SelectQuery，示例：time STICKY, message, lstream STICKY, level_name AS level, *
 	mv.selectQuery, err = ParseSelectQuery(DefaultSelectQuery)
 	if err != nil {
 		panic(err.Error())
@@ -253,7 +264,7 @@ func NewMainView(params *MainViewParams) *MainView {
 	mv.queryLabel = tview.NewTextView()
 	// 动态颜色，不允许滚动，文本内容为：awk pattern:
 	mv.queryLabel.SetDynamicColors(true).SetScrollable(false).SetText(queryLabelMatch)
-	// Input
+	// awk 输入框
 	mv.queryInput = tview.NewInputField()
 	// 处理事件
 	mv.queryInput.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
@@ -301,7 +312,7 @@ func NewMainView(params *MainViewParams) *MainView {
 
 			mv.queryInputApplyStyle()
 			return nil
-		// Esc 退出事件
+		// 当按下 Esc,此时将内容聚焦到 logsTable
 		case tcell.KeyEsc:
 			//if mv.queryInput.GetText() != mv.query {
 			//mv.queryInput.SetText(mv.query)
@@ -309,24 +320,27 @@ func NewMainView(params *MainViewParams) *MainView {
 			//}
 			mv.params.App.SetFocus(mv.logsTable)
 			return nil
-		// Tab 事件
+		// 当按下 Tab，此时内容将聚焦到 queryEditBtn
 		case tcell.KeyTab:
 			mv.params.App.SetFocus(mv.queryEditBtn)
 			return nil
-		// Back 事件
+		// 当按下 Shift + Tab 键时，此时将内容聚焦到 logsTable
 		case tcell.KeyBacktab:
 			mv.params.App.SetFocus(mv.logsTable)
 			return nil
-		// Ctrl+P, UP, Ctrl+N, DOWN 事件
+		// Ctrl+P, UP, Ctrl+N, DOWN 事件，主要是用于处理历史记录，按下UP/Ctrl+P，则向前检索历史，按下DOWN/Ctrl+N，则向后检索历史
 		case tcell.KeyCtrlP, tcell.KeyUp, tcell.KeyCtrlN, tcell.KeyDown:
 			var item clhistory.Item
+			// 将 queryText 转换为 queryFull
 			qf := QueryFull{
 				Query: mv.queryInput.GetText(),
 			}
+			// 将queryFull 转换为 cmd
 			cmd := qf.MarshalShellCmd()
 
 			for {
 				var hasMore bool
+				// Ctrl+P / UP 向前检索历史记录，Ctrl+N / Next 向前检索历史记录
 				if event.Key() == tcell.KeyCtrlP || event.Key() == tcell.KeyUp {
 					item, hasMore = mv.params.QueryHistory.Prev(cmd)
 				} else {
@@ -334,6 +348,7 @@ func NewMainView(params *MainViewParams) *MainView {
 				}
 
 				var tmp QueryFull
+				// 解析查询结果
 				if err := tmp.UnmarshalShellCmd(item.Str); err != nil {
 					mv.showMessagebox("err", "Broken query history", err.Error(), &MessageboxParams{
 						CopyButton: true,
@@ -341,6 +356,7 @@ func NewMainView(params *MainViewParams) *MainView {
 					return nil
 				}
 
+				// 非空，且不一致
 				if (tmp.Query != "" && tmp.Query != qf.Query) || !hasMore {
 					// Either we found a different value for this field, or ran out of
 					// history. Set this value in the original QueryFull, and use it.
@@ -349,9 +365,11 @@ func NewMainView(params *MainViewParams) *MainView {
 				}
 			}
 
+			// 将检索的历史记录写入到 queryInput
 			mv.queryInput.SetText(qf.Query)
 			return nil
 
+		// Delete / Backspace / Ctrl+D / Ctrl+W / Ctrl+U / Ctrl+K，重置历史记录
 		case tcell.KeyRune, tcell.KeyBackspace, tcell.KeyBackspace2,
 			tcell.KeyDelete, tcell.KeyCtrlD,
 			tcell.KeyCtrlW, tcell.KeyCtrlU, tcell.KeyCtrlK:
@@ -362,6 +380,7 @@ func NewMainView(params *MainViewParams) *MainView {
 		return event
 	})
 
+	// 在内容变更时，展示不同的背景和颜色
 	mv.queryInput.SetChangedFunc(func(text string) {
 		mv.queryInputApplyStyle()
 	})
@@ -376,22 +395,22 @@ func NewMainView(params *MainViewParams) *MainView {
 		}
 
 		switch event.Key() {
-		case tcell.KeyTab:
+		case tcell.KeyTab: // Tab 移动到下一个组件，meunDropDown
 			mv.params.App.SetFocus(mv.menuDropdown)
-		case tcell.KeyBacktab:
+		case tcell.KeyBacktab: // Shift Tab，移动到前一个组件，queryInput
 			mv.params.App.SetFocus(mv.queryInput)
 			return nil
 
-		case tcell.KeyEsc:
+		case tcell.KeyEsc: // Esc 移动到 logsTable
 			mv.params.App.SetFocus(mv.logsTable)
 
-		case tcell.KeyRune:
+		case tcell.KeyRune: // 字母按键
 			switch event.Rune() {
-			case ':':
+			case ':': // shfit + ;，进入最底部的 cmd line，类似于 vim
 				mv.focusCmdline()
 				return nil
 
-			case 'i', 'a':
+			case 'i', 'a': // i/a 按键，移动到 queryInput，类似于 vim
 				mv.params.App.SetFocus(mv.queryInput)
 				return nil
 			}
@@ -399,13 +418,16 @@ func NewMainView(params *MainViewParams) *MainView {
 
 		return event
 	})
+	// Button 已点击，打开 queryEditView
 	mv.queryEditBtn.SetSelectedFunc(func() {
 		mv.openQueryEditView()
 	})
 
+	// 展示--time
 	mv.timeLabel = tview.NewTextView()
 	mv.timeLabel.SetScrollable(false)
 
+	// menuDropDown
 	mv.menuDropdown = ui.NewDropDown()
 	mv.menuDropdown.SetOptions(getMainMenuTitles(), nil)
 	mv.menuDropdown.SetListStyles(menuUnselected, menuSelected)
@@ -512,6 +534,7 @@ func NewMainView(params *MainViewParams) *MainView {
 		return event
 	})
 
+	// 顶部的元素
 	mv.topFlex = tview.NewFlex().SetDirection(tview.FlexColumn)
 	mv.topFlex.
 		AddItem(mv.queryLabel, 12, 0, false).
@@ -526,6 +549,7 @@ func NewMainView(params *MainViewParams) *MainView {
 
 	mainFlex.AddItem(mv.topFlex, 1, 0, true)
 
+	// 统计图表
 	mv.histogram = NewHistogram()
 	mv.histogram.SetBinSize(histogramBinSize) // 1 minute
 	mv.histogram.SetXFormatter(func(v int) string {
@@ -614,10 +638,12 @@ func NewMainView(params *MainViewParams) *MainView {
 	mv.updateTableHeader(nil)
 
 	//mv.logsTable.SetEvaluateAllRows(true)
+	// 聚焦场景
 	mv.logsTable.SetFocusFunc(func() {
 		mv.logsTable.SetSelectable(true, false)
 		mv.histogram.ShowExternalCursor()
 	})
+	// 失去焦点的场景
 	mv.logsTable.SetBlurFunc(func() {
 		mv.logsTable.SetSelectable(false, false)
 		mv.histogram.HideExternalCursor()
@@ -632,16 +658,16 @@ func NewMainView(params *MainViewParams) *MainView {
 		key := event.Key()
 
 		switch key {
-		case tcell.KeyCtrlD:
+		case tcell.KeyCtrlD: // Ctrl+D 触发 Ctrl+F 事件，即回到当前页最后一条记录
 			// TODO: ideally we'd want to only go half a page down, but for now just
 			// return Ctrl+F which will go the full page down
 			return tcell.NewEventKey(tcell.KeyCtrlF, 0, tcell.ModNone)
-		case tcell.KeyCtrlU:
+		case tcell.KeyCtrlU: // Ctrl+U 触发 Ctrl+B 事件，即回到当前页的第一条记录
 			// TODO: ideally we'd want to only go half a page up, but for now just
 			// return Ctrl+B which will go the full page up
 			return tcell.NewEventKey(tcell.KeyCtrlB, 0, tcell.ModNone)
 
-		case tcell.KeyEsc:
+		case tcell.KeyEsc: // Esc
 			if mv.overlayMsgView != nil && mv.overlayMsgViewIsMinimized {
 				mv.makeOverlayVisible()
 				mv.bumpOverlay()
@@ -649,11 +675,11 @@ func NewMainView(params *MainViewParams) *MainView {
 
 		case tcell.KeyRune:
 			switch event.Rune() {
-			case ':':
+			case ':': // : 聚焦底部命令行
 				mv.focusCmdline()
 				return nil
 
-			case 'i', 'a':
+			case 'i', 'a': // i/a 聚焦 queryInput
 				mv.params.App.SetFocus(mv.queryInput)
 				return nil
 			}
@@ -666,13 +692,14 @@ func NewMainView(params *MainViewParams) *MainView {
 		if key == tcell.KeyEnter {
 			//mv.logsTable.SetSelectable(true, true)
 		}
-		if key == tcell.KeyTab {
+		if key == tcell.KeyTab { // Tab，聚焦到 queryInput
 			mv.params.App.SetFocus(mv.queryInput)
 		}
-		if key == tcell.KeyBacktab {
+		if key == tcell.KeyBacktab { // Shift + Tab，聚焦到 Histogram
 			mv.params.App.SetFocus(mv.histogram)
 		}
 	}).SetSelectedFunc(func(row int, column int) {
+		// 如果是第一行，此时内容展示  < MOAR ! > ，选择该行代表获取更多数据
 		if row == rowIdxLoadOlder {
 			// Request to load more (older) logs
 
@@ -686,6 +713,7 @@ func NewMainView(params *MainViewParams) *MainView {
 			})
 
 			// Update the cell text
+			// 更新为 Loading
 			mv.logsTable.SetCell(
 				rowIdxLoadOlder, 0,
 				newTableCellButton("... loading ..."),
@@ -695,7 +723,9 @@ func NewMainView(params *MainViewParams) *MainView {
 
 		// "Click" on a data cell: show details
 
+		// 读取该行的cell信息
 		firstCell := mv.logsTable.GetCell(row, 0)
+		// 从cell中读取logMsg
 		msg := firstCell.GetReference().(core.LogMsg)
 
 		existingNamesSet := map[string]struct{}{
@@ -706,6 +736,7 @@ func NewMainView(params *MainViewParams) *MainView {
 			existingNamesSet[key] = struct{}{}
 		}
 
+		// 展示行细节
 		rdv := NewRowDetailsView(mv, &RowDetailsViewParams{
 			DoneFunc:         mv.applyQueryEditData,
 			Data:             mv.getQueryFull(),
@@ -2013,8 +2044,11 @@ func (mv *MainView) queueUpdateLater(f func()) {
 }
 
 func (mv *MainView) openQueryEditView() {
+	// 加载历史记录
 	mv.params.QueryHistory.Load()
+	// 重置历史记录
 	mv.params.QueryHistory.Reset()
+	// 展示页面，并将当前的查询四要素信息展示在上面
 	mv.queryEditView.Show(mv.getQueryFull())
 }
 

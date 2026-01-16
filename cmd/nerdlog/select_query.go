@@ -27,6 +27,7 @@ type SelectQueryParsed struct {
 
 	// If IncludeAll is true, then after all the fields in the Fields slice, all other
 	// fields will be included in lexicographical order.
+	// 当 selQuery 中指定了 * 时
 	IncludeAll bool
 }
 
@@ -42,39 +43,48 @@ type SelectQueryField struct {
 	Sticky bool
 }
 
+// 解析：time STICKY, message, lstream STICKY, level_name AS level, * 为 SelectQueryParsed
 func ParseSelectQuery(sq SelectQuery) (*SelectQueryParsed, error) {
 	ret := &SelectQueryParsed{}
 
+	// 不能为空
 	if sq == "" {
 		return nil, errors.Errorf("no fields selected")
 	}
 
+	// 使用,拆分
 	fields := strings.Split(string(sq), ",")
 
 	for i, fldStr := range fields {
+		// 按照 unicode 空白字符（' ', \t, \n, \r, 全角空格，其他 Unicode whitespace）拆分字符串
 		parts := strings.Fields(fldStr)
 
+		// 不允许为空白
 		if len(parts) == 0 {
 			return nil, errors.Errorf("empty field #%d", i)
 		}
 
+		// 识别到*时，只能允许单个，不允许有其他内容
 		if parts[0] == "*" {
 			if len(parts) != 1 {
 				return nil, errors.Errorf("invalid wildcard specifier")
 			}
-
+			// 更新标志位，并解析下一个
 			ret.IncludeAll = true
 			continue
 		}
 
+		// * 后面不准跟其他任何，即*本身必须是最后一位
 		if ret.IncludeAll {
 			return nil, errors.Errorf("wildcard can only be the last item")
 		}
 
+		// 构建查询字段
 		field := SelectQueryField{
 			Name:        parts[0],
 			DisplayName: parts[0],
 		}
+
 
 		const (
 			stateRoot = iota

@@ -70,10 +70,11 @@ type cmdWithOpts struct {
 	opts CmdOpts
 }
 
+// 核心启动
 func newNerdlogApp(
 	params nerdlogAppParams, queryCLHistory *clhistory.CLHistory,
 ) (*nerdlogApp, error) {
-	// 初始化日志
+	// 初始化日志，后续的信息都记录到日志中
 	logger := log.NewLogger(params.logLevel)
 
 	// 读取用户目录
@@ -82,7 +83,7 @@ func newNerdlogApp(
 		return nil, errors.Annotatef(err, "getting home dir")
 	}
 
-	// 读取 cmd 历史记录
+	// 读取 命令行 历史记录
 	cmdLineHistory, err := clhistory.New(clhistory.CLHistoryParams{
 		Filename: params.cmdHistoryFile,
 	})
@@ -106,11 +107,11 @@ func newNerdlogApp(
 		// 创建可视化终端
 		tviewApp: tview.NewApplication(),
 
-		// 命令行历史记录
+		// 命令行历史记录，基于文件，位于 ~/.nerdlog_history
 		cmdLineHistory: cmdLineHistory,
-		// 浏览器风格的历史记录
+		// 浏览器风格的历史记录，基于内存
 		queryBLHistory: blhistory.New(),
-		// 查询历史记录
+		// 查询历史记录，基于文件，位于 ~/.nerdlog_query_history
 		queryCLHistory: queryCLHistory,
 	}
 

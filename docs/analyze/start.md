@@ -26,8 +26,22 @@
 
 - 输出版本信息然后退出 `go run ./cmd/nerdlog/ -v`
 
-## 传输模式
+- 读取本机的 `journalctl`,设置 lstreams 为 `localhost:22:journalctl`
+- 读取本机的任意日志，设置 lstreams 为 `localhost:22:/home/mawen/logs/monitor.log`
 
-- `ssh-lib`
-- `ssh-bin`
-- `custom`
+- `./bin/nerdlog --lstreams 'localhost:22:journalctl'`
+
+- `./bin/nerdlog --lstreams 'localhost:22:/home/mawen/logs/monitor.log'`
+
+- `./bin/nerdlog --lstreams 'localhost:22:/home/mawen/logs/monitor.log,localhost:22:/home/mawen/logs/nacos/remote.log'`
+
+## Mapping
+
+历史记录：`:1768526287302979453:119:0:nerdlog --lstreams 'localhost:22:journalctl' --time -1h --pattern /Error/ --selquery 'time STICKY, message, lstream, *'`
+
+- `clhistory.Item`
+
+命令行：`nerdlog --lstreams 'localhost:22:journalctl' --time -1h --pattern /Error/ --selquery 'time STICKY, message, lstream, *'`
+
+- `clhisotry.Item.Str`
+- `main.QueryFull`

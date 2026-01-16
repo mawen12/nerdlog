@@ -1,14 +1,14 @@
 {
     "configurations": [
         {
-            "name": "Debug",
+            "name": "Debug Journalctl",
             "type": "go",
             "request": "launch",
             "mode": "auto",
             "program": "${workspaceFolder}/cmd/nerdlog",
             "cwd": "${workspaceFolder}",
             "env": {},
-            "args": ["-d", "--log-level=debug", "--metrics"]
+            "args": ["--lstreams", "localhost:22:journalctl"]
         },
         {
             "name": "Debug Sessions",

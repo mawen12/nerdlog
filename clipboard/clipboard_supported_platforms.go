@@ -18,6 +18,7 @@ var InitErr error = nil
 // an error, not a panic; therefore we have this wrapper guarded with build
 // flags above.
 func init() {
+	// 读取 NERDLOG_NO_CLIPBOARD 环境变量，该配置用于禁用剪切板
 	if os.Getenv("NERDLOG_NO_CLIPBOARD") != "" {
 		InitErr = errors.Errorf("clipboard is disabled via NERDLOG_NO_CLIPBOARD env var")
 		return
