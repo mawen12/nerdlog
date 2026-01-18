@@ -4,9 +4,11 @@ import "time"
 
 const (
 	// MaxNumLinesDefault is a default for QueryLogsParams.MaxNumLines below.
+	// 默认读取日志的最大行数
 	MaxNumLinesDefault = 250
 )
 
+// 查询日志的参数，有四要素：时间，查询语句，是否查询之前，是否刷新索引
 type QueryLogsParams struct {
 	// maxNumLines is how many log lines the nerdlog_agent.sh will return at
 	// most.

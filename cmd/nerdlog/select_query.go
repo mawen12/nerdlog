@@ -23,11 +23,12 @@ var FieldNamesSpecial = map[string]struct{}{
 type SelectQuery string
 
 type SelectQueryParsed struct {
+	// 解析的字段
 	Fields []SelectQueryField
 
 	// If IncludeAll is true, then after all the fields in the Fields slice, all other
 	// fields will be included in lexicographical order.
-	// 当 selQuery 中指定了 * 时
+	// 当 selQuery 中指定了 * 时，log table 中展示所有列
 	IncludeAll bool
 }
 
@@ -47,7 +48,7 @@ type SelectQueryField struct {
 func ParseSelectQuery(sq SelectQuery) (*SelectQueryParsed, error) {
 	ret := &SelectQueryParsed{}
 
-	// 不能为空
+	// 不能为空,因为数据要展示，所以必须要指定字段
 	if sq == "" {
 		return nil, errors.Errorf("no fields selected")
 	}
@@ -82,9 +83,8 @@ func ParseSelectQuery(sq SelectQuery) (*SelectQueryParsed, error) {
 		// 构建查询字段
 		field := SelectQueryField{
 			Name:        parts[0],
-			DisplayName: parts[0],
+			DisplayName: parts[0], // 此处是展示在表格中的名称，后续通过 AS 来设置别名
 		}
-
 
 		const (
 			stateRoot = iota
@@ -92,38 +92,49 @@ func ParseSelectQuery(sq SelectQuery) (*SelectQueryParsed, error) {
 		)
 
 		state := stateRoot
+		// 从第二个部分开始解析，例如 time STICKY，那么此时就解析 STICKY
 		for _, token := range parts[1:] {
 			switch state {
 			case stateRoot:
+				// 转换为小写
 				switch strings.ToLower(token) {
+				// as
 				case "as":
+					// 处理 message as msg as msg2 这种多个as的场景，规则为只能有一个as
 					if field.Name != field.DisplayName {
 						return nil, errors.Errorf("syntax error for field %s: more than a single 'AS'", field.Name)
 					}
 
+					// 到了开始处理 as 的阶段
 					state = stateWaitDisplayName
 					continue
 				case "sticky":
+					// 处理 message STICKY STICKY 这种多个 STICKY 的场景，规则只能有一个as
 					if field.Sticky {
 						return nil, errors.Errorf("syntax error for field %s: more than a single 'STICKY'", field.Name)
 					}
 
+					// 标识位为true
 					field.Sticky = true
 					continue
 				default:
+					// 仅支持 AS/STICKY,其他一律不支持
 					return nil, errors.Errorf("syntax error for field %s", field.Name)
 				}
 
 			case stateWaitDisplayName:
+				// 处理 AS 的场景
 				field.DisplayName = token
 				state = stateRoot
 			}
 		}
 
+		// 解析失败，例如 message as，解析没有完成
 		if state != stateRoot {
 			return nil, errors.Errorf("incomplete field %s", field.Name)
 		}
 
+		// 追加字段
 		ret.Fields = append(ret.Fields, field)
 	}
 

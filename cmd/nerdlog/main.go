@@ -191,10 +191,11 @@ func main() {
 
 	// We end up here when the user quits the UI
 
-	// 退出 UI 界面
+	// 正常退出
 	fmt.Println("")
 	fmt.Println("Closing connections...")
 
+	// 
 	app.Close()
 	app.Wait()
 

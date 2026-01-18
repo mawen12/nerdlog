@@ -26,6 +26,7 @@ type nerdlogApp struct {
 	// to nil.
 	tviewApp *tview.Application
 
+	// --lstreams 的解析结果
 	lsman    *core.LStreamsManager
 	mainView *MainView
 
@@ -122,7 +123,7 @@ func newNerdlogApp(
 	app.mainView = NewMainView(&MainViewParams{
 		App:     app.tviewApp,
 		Options: app.options,
-		// 日志查询触发
+		// 日志查询触发回调
 		OnLogQuery: func(params core.QueryLogsParams) {
 			// 获取可读取的最大行，默认为 250
 			params.MaxNumLines = app.options.GetMaxNumLines()
@@ -149,7 +150,7 @@ func newNerdlogApp(
 			// 发送查询日志请求（async）
 			app.lsman.QueryLogs(params)
 		},
-		// log stream 变更
+		// log stream 变更，写入 log streams
 		OnLStreamsChange: func(lstreamsSpec string) error {
 			err := app.lsman.SetLStreams(lstreamsSpec)
 			if err != nil {
@@ -212,24 +213,30 @@ func newNerdlogApp(
 		app.afterUserCmdOrOptionChange()
 	}
 
+	// 当不立即触发查询时，主页面Focus logs table，并展示 query Edit view
 	if !params.connectRightAway {
 		app.mainView.params.App.SetFocus(app.mainView.logsTable)
 		app.mainView.queryEditView.Show(params.initialQueryData)
 	} else {
+		// 立即查询，将查询四要素进行解析，并开始查询
 		if err := app.mainView.applyQueryEditData(params.initialQueryData, doQueryParams{}); err != nil {
 			return nil, errors.Annotatef(err, "applying query from command line")
 		}
 	}
 
+	// 处理命令行输入
 	go app.handleCmdLine(cmdCh)
 
 	return app, nil
 }
 
+// 启动 TUI 应用
 func (app *nerdlogApp) runTViewApp() error {
+	// 设置根视图并运行
 	err := app.tviewApp.SetRoot(app.mainView.GetUIPrimitive(), true).Run()
 
 	// Now that TUI app has finished, remember that by resetting it to nil.
+	// 现在 TUI 应用已经结束，通过将其重置为 nil 来记住它。
 	app.tviewApp = nil
 
 	return err
@@ -411,7 +418,7 @@ func (app *nerdlogApp) initLStreamsManager(
 		}
 	}
 
-	// 初始化 logstreams manager
+	// 初始化 logstreams manager，使用Config和SSHConfig完善信息，并开始运行
 	app.lsman = core.NewLStreamsManager(core.LStreamsManagerParams{
 		Logger: logger,
 
@@ -432,15 +439,21 @@ func (app *nerdlogApp) initLStreamsManager(
 	return nil
 }
 
+// 处理命令行输入
 func (app *nerdlogApp) handleCmdLine(cmdCh <-chan cmdWithOpts) {
 	// 循环读取 cmd
 	for {
+		// 阻塞等待 cmd
 		cwo := <-cmdCh
+		// 在主线程中处理 cmd
 		app.tviewApp.QueueUpdateDraw(func() {
+			// 非内部命令，添加到历史记录
 			if !cwo.opts.Internal {
 				app.cmdLineHistory.Add(cwo.cmd)
 			}
+			// 处理命令
 			app.handleCmd(cwo.cmd)
+			// 处理命令或选项变更后的操作
 			app.afterUserCmdOrOptionChange()
 		})
 	}

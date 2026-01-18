@@ -10,6 +10,7 @@ import (
 
 // These are being replaced with the actual values using ldflags;
 // see ../.goreleaser.yaml and ../Makefile.
+// 将被实际值替换的变量，使用 ldflags；见 ../.goreleaser.yaml 和 ../Makefile。
 var (
 	version = "dev"
 	commit  = "none"
@@ -19,7 +20,9 @@ var (
 
 // VersionFullDescr returns the full version description, printed at
 // --version and :version
+// VersionFullDescr 返回完整的版本描述，在 --version 和 :version 时打印
 func VersionFullDescr() string {
+	// 使用 strings.Builder 来高效地构建字符串
 	var sb strings.Builder
 
 	sb.WriteString(fmt.Sprintf("Nerdlog %s\n", version))

@@ -19,12 +19,15 @@ var ErrBusyWithAnotherQuery = errors.Errorf("busy with another query")
 var ErrNotYetConnected = errors.Errorf("not connected to all lstreams yet")
 
 type LStreamsManager struct {
+	// 入参
 	params LStreamsManagerParams
-
-	lstreamsStr      string
+	// 解析后的 logstreams 字符串
+	lstreamsStr string
+	// 解析后的 logstreams 列表
 	parsedLogStreams map[string]LogStream
-
-	lscs      map[string]*LStreamClient
+	// log stream 客户端列表
+	lscs map[string]*LStreamClient
+	// log stream 客户端状态列表
 	lscStates map[string]LStreamClientState
 	// lscConnDetails contains items for all selected lstreams, even after the
 	// connection is done (which is indicated by ConnDetails.Connected being
@@ -38,6 +41,8 @@ type LStreamsManager struct {
 	// down. NOTE that when a LStreamClient starts tearing down, its key changes
 	// (gets prepended with OLD_XXXX_), so re remove an item from the `has` map
 	// with one key, and add an item here with a different key.
+	// 包含正在关闭的 LStreamClient 信息，注意当 LStreamClient 开始关闭时，
+	// 它的 key 会改变（前面会加上 OLD_XXXX_），所以要用不同的 key 从 `has` map 中删除一个项，并在这里添加一个项。
 	lscPendingTeardown map[string]int
 
 	lstreamsByState map[LStreamClientState]map[string]struct{}
@@ -127,14 +132,18 @@ func NewLStreamsManager(params LStreamsManagerParams) *LStreamsManager {
 		defaultTransportMode: params.InitialDefaultTransportMode,
 	}
 
+	// 设置初始的 logstreams
 	if err := lsman.setLStreams(params.InitialLStreams); err != nil {
 		panic("setLStreams didn't like the initial logStreamsSpec: " + err.Error())
 	}
 
+	// 更新 HA 列表，本质上是更新 logstream clients 列表和状态
 	lsman.updateHAs()
+	// 统计各个状态的 logstream client 列表，并统计未连接的 logstream client 数量
 	lsman.updateLStreamsByState()
+	// 发送状态更新
 	lsman.sendStateUpdate()
-
+	// 启动管理器的运行，主要是处理channel中的请求
 	go lsman.run()
 
 	return lsman
@@ -178,12 +187,15 @@ func (lsman *LStreamsManager) setDefaultTransportMode(defaultTransportMode *Tran
 // LocalShellCommand is used when the host is "localhost".
 const LocalShellCommand = "/bin/sh"
 
+// 将 --lstreams 更新到 LStreamsManager 中
 func (lsman *LStreamsManager) setLStreams(lstreamsStr string) error {
+	// 获取当前用户
 	u, err := user.Current()
 	if err != nil {
 		return errors.Annotatef(err, "getting current OS user")
 	}
 
+	// 使用当前用户、传输模式、当前lstreams、SSH 配置解析
 	resolver := NewLStreamsResolver(LStreamsResolverParams{
 		CurOSUser: u.Username,
 
@@ -193,6 +205,7 @@ func (lsman *LStreamsManager) setLStreams(lstreamsStr string) error {
 		SSHConfig:        lsman.params.SSHConfig,
 	})
 
+	// 开始解析
 	parsedLogStreams, err := resolver.Resolve(lstreamsStr)
 	if err != nil {
 		return errors.Trace(err)
@@ -207,7 +220,9 @@ func (lsman *LStreamsManager) setLStreams(lstreamsStr string) error {
 
 func (lsman *LStreamsManager) updateHAs() {
 	// Close unused logstream clients
+	// 关闭不再使用的 logstream clients
 	for key, oldHA := range lsman.lscs {
+		// 检查该 logstream 是否还在使用，如果在使用，则跳过
 		if _, ok := lsman.parsedLogStreams[key]; ok {
 			// The logstream is still used
 			continue
@@ -215,24 +230,34 @@ func (lsman *LStreamsManager) updateHAs() {
 
 		// We used to use this logstream, but now it's filtered out, so close it
 		lsman.params.Logger.Verbose1f("Closing LSClient %s", key)
+		// 删除相关的客户端信息
 		delete(lsman.lscs, key)
+		// 删除相关的状态信息
 		delete(lsman.lscStates, key)
+		// 删除连接详情
 		delete(lsman.lscConnDetails, key)
+		// 删除繁忙阶段信息
 		delete(lsman.lscBusyStages, key)
 
+		// 标识该 logstream client 正在关闭
 		keyNew := fmt.Sprintf("OLD_%s_%s", lsman.randomString(4), key)
+		// 正在关闭的 logstream client 数量加 1
 		lsman.lscPendingTeardown[keyNew] += 1
+		// 发送关闭请求到 channel
 		oldHA.Close(keyNew)
 	}
 
 	// Create new logstream clients
+	// 创建新的 logstream clients
 	for key, ls := range lsman.parsedLogStreams {
+		// 检查该 logstream client 是否已经存在，如果存在，则跳过
 		if _, ok := lsman.lscs[key]; ok {
 			// This logstream client already exists
 			continue
 		}
 
 		// We need to create a new logstream client
+		// 需要创建一个新的 logstream client
 		lsc := NewLStreamClient(LStreamClientParams{
 			LogStream: ls,
 			SSHKeys:   lsman.params.SSHKeys,
@@ -241,14 +266,18 @@ func (lsman *LStreamsManager) updateHAs() {
 			UpdatesCh: lsman.lstreamUpdatesCh,
 			Clock:     lsman.params.Clock,
 		})
+		// 保存 logstream client 信息
 		lsman.lscs[key] = lsc
+		// 初始化 logstream client 状态为未连接
 		lsman.lscStates[key] = LStreamClientStateDisconnected
 	}
 }
 
 func (lsman *LStreamsManager) run() {
+	// 初始化各个状态的 logstream client 列表
 	lsclientsByState := map[LStreamClientState]map[string]struct{}{}
 	for name := range lsman.lscs {
+		// 初始状态为未连接
 		lsclientsByState[LStreamClientStateDisconnected] = map[string]struct{}{
 			name: {},
 		}
@@ -256,17 +285,21 @@ func (lsman *LStreamsManager) run() {
 
 	for {
 		select {
+		// 处理 logstream client 的更新请求
 		case upd := <-lsman.lstreamUpdatesCh:
-			if upd.State != nil {
+			if upd.State != nil { // 处理状态更新
+				// 仅处理已知的 logstream client 的状态更新
 				if _, ok := lsman.lscStates[upd.Name]; ok {
 					lsman.params.Logger.Verbose1f(
 						"Got state update from %s: %s -> %s",
 						upd.Name, upd.State.OldState, upd.State.NewState,
 					)
 
+					// 更新为新状态
 					lsman.lscStates[upd.Name] = upd.State.NewState
 
 					// Maintain lsman.lscConnDetails
+					// 如果新状态为已连接闲置或已连接繁忙，则标识为已连接
 					if upd.State.NewState == LStreamClientStateConnectedIdle ||
 						upd.State.NewState == LStreamClientStateConnectedBusy {
 						cd := lsman.lscConnDetails[upd.Name]
@@ -275,30 +308,34 @@ func (lsman *LStreamsManager) run() {
 					}
 
 					// Maintain lsman.lscBusyStages
+					// 如果新状态非已连接繁忙，则删除繁忙阶段信息
 					if upd.State.NewState != LStreamClientStateConnectedBusy {
 						delete(lsman.lscBusyStages, upd.Name)
 					}
-				} else if _, ok := lsman.lscPendingTeardown[upd.Name]; ok {
+				} else if _, ok := lsman.lscPendingTeardown[upd.Name]; ok { // 处理正在关闭的 logstream client 的状态更新
 					lsman.params.Logger.Verbose1f(
 						"Got state update from tearing-down %s: %s -> %s",
 						upd.Name, upd.State.OldState, upd.State.NewState,
 					)
-				} else {
+				} else { // 处理未知的 logstream client 的状态更新
 					lsman.params.Logger.Warnf(
 						"Got state update from unknown %s: %s -> %s",
 						upd.Name, upd.State.OldState, upd.State.NewState,
 					)
 				}
 
+				// 统计各个状态的 logstream client 列表，并统计未连接的 logstream client 数量
 				lsman.updateLStreamsByState()
+				// 发送状态更新
 				lsman.sendStateUpdate()
-			} else if upd.ConnDetails != nil {
+			} else if upd.ConnDetails != nil { // 处理连接详情更新
 				lsman.params.Logger.Verbose1f("ConnDetails for %s: %+v", upd.Name, *upd.ConnDetails)
-				lsman.lscConnDetails[upd.Name] = *upd.ConnDetails
-				lsman.sendStateUpdate()
-			} else if upd.BootstrapDetails != nil {
+				lsman.lscConnDetails[upd.Name] = *upd.ConnDetails // 保存连接详情
+				lsman.sendStateUpdate()                           // 发送状态更新
+			} else if upd.BootstrapDetails != nil { // 处理引导详情更新
 				lsman.params.Logger.Verbose1f("BootstrapDetails for %s: %+v", upd.Name, *upd.BootstrapDetails)
 
+				// 发送引导问题更新
 				upd := LStreamsManagerUpdate{
 					BootstrapIssue: &BootstrapIssue{
 						LStreamName: upd.Name,
@@ -308,25 +345,30 @@ func (lsman *LStreamsManager) run() {
 					},
 				}
 				lsman.params.UpdatesCh <- upd
-			} else if upd.BusyStage != nil {
+			} else if upd.BusyStage != nil { // 处理繁忙阶段更新
 				lsman.lscBusyStages[upd.Name] = *upd.BusyStage
-				lsman.sendStateUpdate()
-			} else if upd.DataRequest != nil {
+				lsman.sendStateUpdate() // 发送状态更新
+			} else if upd.DataRequest != nil { // 处理数据请求更新
+				// 发送数据请求更新
 				lsman.params.UpdatesCh <- LStreamsManagerUpdate{
 					DataRequest: upd.DataRequest,
 				}
-			} else if upd.TornDown {
+			} else if upd.TornDown { // 处理关闭完成更新
 				// One of our LStreamClient-s has just shut down, account for it properly.
+				// 一台 LStreamClient 刚刚关闭，正确地计算它。
 				lsman.lscPendingTeardown[upd.Name] -= 1
 
 				// Sanity check.
+				// 健全性检查
 				if lsman.lscPendingTeardown[upd.Name] < 0 {
 					panic(fmt.Sprintf("got TornDown update and lscPendingTeardown[%s] becomes %d", upd.Name, lsman.lscPendingTeardown[upd.Name]))
 				}
 
 				// Check how many LStreamClient-s are still in the process of teardown,
 				// and if needed, finish the teardown of the whole LStreamsManager.
+				// 检查有多少 LStreamClient 正在关闭过程中，如果需要，完成整个 LStreamsManager 的关闭。
 				numPending := lsman.getNumLStreamClientsTearingDown()
+				// 如果还有正在关闭的 logstream client，则打印日志
 				if numPending != 0 {
 					pendingSB := strings.Builder{}
 					i := 0
@@ -352,21 +394,22 @@ func (lsman *LStreamsManager) run() {
 						"LStreamClient %s teardown is completed, %d more are still pending: %s",
 						upd.Name, numPending, pendingSB.String(),
 					)
-				} else {
+				} else { // 没有正在关闭的 logstream client，则打印日志
 					lsman.params.Logger.Verbose1f("LStreamClient %s teardown is completed, no more pending teardowns", upd.Name)
 
 					// If the whole LStreamsManager was shutting down, we're done now.
-					if lsman.tearingDown {
+					if lsman.tearingDown { // 如果整个 LStreamsManager 正在关闭，则现在完成
 						lsman.params.Logger.Infof("LStreamsManager teardown is completed")
 						close(lsman.torndownCh)
 						return
 					}
 				}
 
+				// 发送状态更新
 				lsman.sendStateUpdate()
 			}
 
-		// 查询请求
+		// 综合处理所有请求的入口
 		case req := <-lsman.reqCh:
 			switch {
 			case req.queryLogs != nil:
@@ -450,15 +493,19 @@ func (lsman *LStreamsManager) run() {
 					})
 				}
 
+			// 更新 lstreams 的请求
 			case req.updLStreams != nil:
+				// 获取 --lstreams
 				r := req.updLStreams
 				lsman.params.Logger.Infof("LStreams manager: update logstreams spec: %s", r.logStreamsSpec)
 
+				// 存在该值，代表当前有查询正在进行，此时不允许更新 lstreams,必须要等待查询结束后，才能更新
 				if lsman.curQueryLogsCtx != nil {
 					r.resCh <- ErrBusyWithAnotherQuery
 					continue
 				}
 
+				// 设置
 				if err := lsman.setLStreams(r.logStreamsSpec); err != nil {
 					r.resCh <- errors.Trace(err)
 					continue
@@ -525,6 +572,7 @@ func (lsman *LStreamsManager) run() {
 			lsman.params.Logger.Verbose1f("Got a response from %v: %+v", resp.hostname, resp)
 
 			switch {
+			// 处理查询日志的响应
 			case lsman.curQueryLogsCtx != nil:
 				// 存在报错，则写入日志并记录
 				if resp.err != nil {
@@ -534,7 +582,9 @@ func (lsman *LStreamsManager) run() {
 
 				// 根据响应类型进行处理
 				switch v := resp.resp.(type) {
+				// 日志响应
 				case *LogResp:
+					// 保存响应
 					lsman.curQueryLogsCtx.resps[resp.hostname] = v
 
 					// If we collected responses from all nodes, handle them.
@@ -569,16 +619,22 @@ func (lsman *LStreamsManager) run() {
 				lsman.params.Logger.Errorf("Dropping update from %s on the floor", resp.hostname)
 			}
 
+		// 处理关闭请求
 		case <-lsman.teardownReqCh:
 			lsman.params.Logger.Infof("LStreamsManager teardown is started")
+			// 标识正在关闭
 			lsman.tearingDown = true
+			// 置空 lstreams
 			lsman.setLStreams("")
-
+			// 更新 HA 列表，本质上是更新 logstream clients 列表和状态
 			lsman.updateHAs()
+			// 统计各个状态的 logstream client 列表，并统计未连接的 logstream client 数量
 			lsman.updateLStreamsByState()
 
 			// Check if we don't need to wait for anything, and can teardown right away.
+			// 检查是否不需要等待任何东西，可以立即关闭
 			numPending := lsman.getNumLStreamClientsTearingDown()
+			// 如果没有正在关闭的 logstream client，则直接关闭
 			if numPending == 0 {
 				lsman.params.Logger.Infof("LStreamsManager teardown is completed")
 				close(lsman.torndownCh)
@@ -587,6 +643,7 @@ func (lsman *LStreamsManager) run() {
 
 			// We still need to wait for some LStreamClient-s to teardown, so send an
 			// update for now and keep going.
+			// 发送状态更新
 			lsman.sendStateUpdate()
 		}
 	}
@@ -631,6 +688,7 @@ func (lsman *LStreamsManager) getNumLStreamClientsTearingDown() int {
 
 // Close initiates the shutdown. It doesn't wait for the shutdown to complete;
 // use Wait for it.
+// 
 func (lsman *LStreamsManager) Close() {
 	select {
 	case lsman.teardownReqCh <- struct{}{}:
@@ -673,16 +731,21 @@ func (lsman *LStreamsManager) QueryLogs(params QueryLogsParams) {
 	}
 }
 
+// 将 --lstreams 解析，并更新到 LStreamsManager
 func (lsman *LStreamsManager) SetLStreams(logStreamsSpec string) error {
+	// 构造一个允许保存单个错误的chan
 	resCh := make(chan error, 1)
 
+	// 将要解析的内容和解析错误，封装为请求，投递到 reqCh channel
 	lsman.reqCh <- lstreamsManagerReq{
+		// 这是一个 update lstreams
 		updLStreams: &lstreamsManagerReqUpdLStreams{
 			logStreamsSpec: logStreamsSpec,
 			resCh:          resCh,
 		},
 	}
 
+	// 等待 resCh 的返回，本质上是等待解析结束，出现错误或nil，将其投递到 resCh
 	return <-resCh
 }
 
@@ -706,6 +769,7 @@ func (lsman *LStreamsManager) Disconnect() {
 	}
 }
 
+// queryLogs的上下文
 type manQueryLogsCtx struct {
 	req *QueryLogsParams
 
@@ -776,51 +840,70 @@ type BootstrapIssue struct {
 	WarnJournalctlNoAdminAccess bool
 }
 
+// 统计各个状态的 logstream client 列表，并统计未连接的 logstream client 数量
 func (lsman *LStreamsManager) updateLStreamsByState() {
+	// 统计未连接的 logstream client 数量，初始化为 0
 	lsman.numNotConnected = 0
+	// 统计各个状态的 logstream client 列表
 	lsman.lstreamsByState = map[LStreamClientState]map[string]struct{}{}
 
+	// 遍历所有的 logstream client 状态
 	for name, state := range lsman.lscStates {
+		// 获取该状态对应的 logstream client 列表
 		set, ok := lsman.lstreamsByState[state]
+		// 如果不存在，则创建一个新的列表
 		if !ok {
 			set = map[string]struct{}{}
 			lsman.lstreamsByState[state] = set
 		}
 
+		// 将该 logstream name 添加到对应状态的列表中
 		set[name] = struct{}{}
 
+		// 如果该状态是未连接状态，则未连接数量加 1
 		if !isStateConnected(state) {
 			lsman.numNotConnected++
 		}
 	}
 }
 
+// 复制当前状态，并发送到 channel
 func (lsman *LStreamsManager) sendStateUpdate() {
+	// 已连接数量为 0
 	numConnected := 0
 	for _, state := range lsman.lscStates {
+		// 如果该状态是已连接状态，则已连接数量加 1
 		if isStateConnected(state) {
 			numConnected++
 		}
 	}
 
+	// 复制连接详情
 	connDetailsCopy := make(map[string]ConnDetails, len(lsman.lscConnDetails))
+	// 遍历连接详情，进行复制
 	for k, v := range lsman.lscConnDetails {
 		connDetailsCopy[k] = v
 	}
 
+	// 复制繁忙阶段信息
 	busyStagesCopy := make(map[string]BusyStage, len(lsman.lscBusyStages))
+	// 遍历繁忙阶段信息，进行复制
 	for k, v := range lsman.lscBusyStages {
 		busyStagesCopy[k] = v
 	}
 
+	// 正在关闭的 logstream 列表
 	tearingDown := make([]string, 0, len(lsman.lscPendingTeardown))
+	// 遍历正在关闭的 logstream 列表，进行复制
 	for k, num := range lsman.lscPendingTeardown {
 		for i := 0; i < num; i++ {
 			tearingDown = append(tearingDown, k)
 		}
 	}
+	// 按字典序排序
 	sort.Strings(tearingDown)
 
+	// 构造更新内容
 	upd := LStreamsManagerUpdate{
 		State: &LStreamsManagerState{
 			NumLStreams:          len(lsman.lscs),
@@ -835,6 +918,7 @@ func (lsman *LStreamsManager) sendStateUpdate() {
 		},
 	}
 
+	// 发送更新内容到 channel
 	lsman.params.UpdatesCh <- upd
 }
 

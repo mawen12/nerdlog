@@ -333,23 +333,31 @@ func (lsc *LStreamClient) SendFoo() {
 
 type LStreamClientState string
 
+// log stream 客户端状态
 const (
-	LStreamClientStateDisconnected  LStreamClientState = "disconnected"
-	LStreamClientStateConnecting    LStreamClientState = "connecting"
+	// disconected - 未连接
+	LStreamClientStateDisconnected LStreamClientState = "disconnected"
+	// connecting - 连接中
+	LStreamClientStateConnecting LStreamClientState = "connecting"
+	// disconnecting - 断开连接中
 	LStreamClientStateDisconnecting LStreamClientState = "disconnecting"
+	// connected_idle - 已连接，空闲中
 	LStreamClientStateConnectedIdle LStreamClientState = "connected_idle"
+	// connected_busy - 已连接，繁忙中
 	LStreamClientStateConnectedBusy LStreamClientState = "connected_busy"
 )
 
+// isStateConnected 返回当前状态是否为已连接状态
 func isStateConnected(state LStreamClientState) bool {
 	return state == LStreamClientStateConnectedIdle || state == LStreamClientStateConnectedBusy
 }
 
+// changeState 更新当前状态
 func (lsc *LStreamClient) changeState(newState LStreamClientState) {
 	oldState := lsc.state
 
 	// Properly leave old state
-
+	// 如果之前是已连接状态，而现在不是已连接状态，则关闭连接
 	if isStateConnected(oldState) && !isStateConnected(newState) {
 		// Initiate disconnect
 		lsc.conn.conn.Close()
@@ -980,8 +988,12 @@ func (lsc *LStreamClient) EnqueueCmd(cmd lstreamCmd) {
 // If changeName is non-empty, the LStreamClient's Name will be updated; it's
 // useful to distinguish this LStreamClient from potentially-existing another one
 // with the same (old) name.
+// 关闭初始化。它不会等待关闭完成；客户端代码需要等待相应的事件（TornDown：true）。
+//
+// 如果changeName非空，则LStreamClient的名称将被更新；这对于将此LStreamClient与可能存在的另一个具有相同（旧）名称的LStreamClient区分开来非常有用。
 func (lsc *LStreamClient) Close(changeName string) {
 	select {
+	// 发送断开连接请求到断开连接请求通道	
 	case lsc.disconnectReqCh <- disconnectReq{
 		teardown:   true,
 		changeName: changeName,
@@ -1394,9 +1406,11 @@ func (lsc *LStreamClient) handleCommandResultsIfDone(cmdCtx *lstreamCmdCtx) {
 //
 // Most of the time it just uses the current year, but on the year boundary
 // it can return previous or next year.
+// 根据给定时间的月份和当前对比，来推断年份
 func InferYear(now, t time.Time) time.Time {
 	// If month of the syslog being parsed is the same as the current month, just
 	// use the current year.
+	// 月份相同，即为今年
 	if now.Month() == t.Month() {
 		return timeWithYear(t, now.Year())
 	}
@@ -1404,9 +1418,12 @@ func InferYear(now, t time.Time) time.Time {
 	// Month of the syslog is different from the current month, so we need to
 	// have logic for the boundary of the year.
 
+	// 处理边界月份
+	// 给定为12月，但当前为1月，则为去年
 	if t.Month() == time.December && now.Month() == time.January {
 		// We're in January now and we're parsing some logs from December.
 		return timeWithYear(t, now.Year()-1)
+		// 给定为1月，当前为12月，则为明年
 	} else if t.Month() == time.January && now.Month() == time.December {
 		// We're in December now and we're parsing some logs from January.
 		// It's weird to get timestamp from the future, but better to have a case
@@ -1415,6 +1432,7 @@ func InferYear(now, t time.Time) time.Time {
 	}
 
 	// For all other cases, still use the current year.
+	// 其他所有场景，均视为同一年
 	return timeWithYear(t, now.Year())
 }
 

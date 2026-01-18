@@ -42,7 +42,10 @@ type MainViewParams struct {
 
 	// OnLogQuery is called by MainView whenever the user submits a query to get
 	// logs.
-	//
+	// 当用户提交了查询时，触发该回调
+	// - 点击了 <MORE!> 时触发
+	// - queryInput 的 Enter 事件
+	// -
 	OnLogQuery OnLogQueryCallback
 
 	OnLStreamsChange OnLStreamsChange
@@ -101,9 +104,11 @@ type MainView struct {
 	lstreamsSpec string
 
 	// from, to represent the selected time range
+	// --time 指定的值解析结果
 	from, to TimeOrDur
 
 	// query is the effective search query
+	// --query 指定的值
 	query string
 
 	// actualFrom, actualTo represent the actual time range resolved from from
@@ -284,6 +289,7 @@ func NewMainView(params *MainViewParams) *MainView {
 				// Before making a query, we need to update the logstreams first.
 
 				mv.sendLStreamsChangeOnNextQuery = false
+				// 更新log stream
 				if err := mv.params.OnLStreamsChange(mv.lstreamsSpec); err != nil {
 					// It shouldn't happen really, since if we already had some mv.lstreamsSpec,
 					// it means it must have already passed the checks and can't be invalid,
@@ -1023,28 +1029,36 @@ func (mv *MainView) queryInputApplyStyle() {
 	mv.queryLabel.SetText(text)
 }
 
+// 立即查询，将查询四要素进行解析，并开始查询
 func (mv *MainView) applyQueryEditData(data QueryFull, dqp doQueryParams) error {
+	// 读取时区
 	tz := mv.params.Options.GetTimezone()
 
+	// 使用该时区解析 --time 参数 => FromToRange
 	ftr, err := ParseFromToRange(tz, data.Time)
 	if err != nil {
 		return errors.Annotatef(err, "time")
 	}
 
+	// 解析 --selquery 参数 => SelectQueryParsed
 	sqp, err := ParseSelectQuery(data.SelectQuery)
 	if err != nil {
 		return errors.Annotatef(err, "select query")
 	}
 
+	// 将 --query (awk) 设置到 queryInput 上
 	mv.setQuery(data.Query)
+	// 将 --time 的结果设置到 timeLabel 上
 	mv.setTimeRange(ftr.From, ftr.To)
 
 	mv.params.Logger.Infof("Applying lstreams: %s", data.LStreams)
+	// 采用回调的方式，将 lstreams 更新到 LStreamsManager 中
 	err = mv.params.OnLStreamsChange(data.LStreams)
 	if err != nil {
 		return errors.Annotate(err, "lstreams")
 	}
 
+	// 
 	mv.setSelectQuery(sqp)
 
 	mv.setLStreams(data.LStreams)

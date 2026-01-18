@@ -9,14 +9,19 @@ import (
 // and the query to filter logs.
 // 代表一个查询，组成有：logstreams, time, query, selQuery
 // 示例记录为：nerdlog --lstreams 'localhost:22:journalctl' --time -1h --pattern /Error/ --selquery 'time STICKY, message, lstream, *'
+// 查询四要素：
+// - --lstreams
+// - --time
+// - --query
+// - --selquery
 type QueryFull struct {
-	// 由逗号分隔的多个logstream，每个logstream格式为：<user>@<host>:<port>:</var/log/messages|journalctl|...>
+	// --lstreams 由逗号分隔的多个logstream，每个logstream格式为：<user>@<host>:<port>:</var/log/messages|journalctl|...>
 	LStreams string
-	// 时间/时间范围，用于限制日志的获取范围，支持格式为：-1h（表示最近1小时），Mar27 12:00（表示特定时间）
+	// --time 时间/时间范围，用于限制日志的获取范围，支持格式为：-1h（表示最近1小时），Mar27 12:00（表示特定时间）
 	Time string
-	// awk 查询模式，用于过滤日志内容，以便满足指定条件，例如：/Error/
+	// --query awk 查询模式，用于过滤日志内容，以便满足指定条件，例如：/Error/
 	Query string
-	// selQuery，即查询日志，例如：time STICKY, message, lstream, *
+	// --selQuery，即查询结果字段，例如：time STICKY, message, lstream, *
 	SelectQuery SelectQuery
 }
 
@@ -31,7 +36,7 @@ var execName = "nerdlog"
 // Therefore, there are 7 parts.
 // 定义了一个 shell-command 中有几个部分，如下，至少7个部分，格式如下：
 // nerdlog --lstreams <value> --time <value> --pattern <value>
-// TODO Fix 出现了描述不一致的场景，描述中只有7处，实际有9处，默认有 --selquery，修正：--selquery 
+// TODO Fix 出现了描述不一致的场景，描述中只有7处，实际有9处，默认有 --selquery，修正：--selquery
 var numShellParts = 1 + 3*2
 
 // 将 QueryFull 转换为原始的shell命令

@@ -1,5 +1,6 @@
 {
     "configurations": [
+        
         {
             "name": "Debug Journalctl",
             "type": "go",
@@ -11,24 +12,14 @@
             "args": ["--lstreams", "localhost:22:journalctl"]
         },
         {
-            "name": "Debug Sessions",
+            "name": "Debug MACOS",
             "type": "go",
             "request": "launch",
             "mode": "auto",
             "program": "${workspaceFolder}/cmd/nerdlog",
             "cwd": "${workspaceFolder}",
             "env": {},
-            "args": ["-d", "--log-level=debug", "--metrics", "--sessions"]
-        },
-        {
-            "name": "Run",
-            "type": "go",
-            "request": "launch",
-            "mode": "auto",
-            "program": "${workspaceFolder}/cmd/nerdlog",
-            "cwd": "${workspaceFolder}",
-            "env": {},
-            "args": [""]
+            "args": ["--lstreams", "localhost:22:/Users/mawen/logs/app.log"]
         },
         {
             "name": "Version",

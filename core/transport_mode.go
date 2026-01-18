@@ -43,19 +43,21 @@ func NewTransportModeCustom(customCommand string) *TransportMode {
 }
 
 func ParseTransportMode(spec string) (*TransportMode, error) {
+	// 构造 custom: 前缀
 	customPrefix := fmt.Sprintf("%s:", TransportModeKindCustom)
 
 	switch {
+	// ssh-lib
 	case spec == TransportModeKindSSHLib:
 		return &TransportMode{
 			kind: TransportModeKindSSHLib,
 		}, nil
-
+	// ssh-bin
 	case spec == TransportModeKindSSHBin:
 		return &TransportMode{
 			kind: TransportModeKindSSHBin,
 		}, nil
-
+	// custom:...
 	case strings.HasPrefix(spec, customPrefix):
 		cmd := strings.TrimPrefix(spec, customPrefix)
 
@@ -64,6 +66,7 @@ func ParseTransportMode(spec string) (*TransportMode, error) {
 			customCommand: cmd,
 		}, nil
 
+	// invalid
 	default:
 		return nil, errors.Errorf("invalid transport mode %q", spec)
 	}

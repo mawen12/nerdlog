@@ -24,6 +24,7 @@ func (t TimeOrDur) In(loc *time.Location) TimeOrDur {
 	return t
 }
 
+// 当 Time 被设置后，其含义为固定的某个时间，便是绝对时间
 func (t TimeOrDur) IsAbsolute() bool {
 	return !t.Time.IsZero()
 }
@@ -66,8 +67,10 @@ func (t TimeOrDur) Format(layout string) string {
 // ParseTimeOrDur tries to parse a string as either time or duration.
 // If parsing as a duration succeeds, then layout is ignored; otherwise it's
 // used to parse it as time.
+// 支持将 s 解析为 Time/Duration
 func ParseTimeOrDur(timezone *time.Location, layout, s string) (TimeOrDur, error) {
 	// Try to parse as a duration first
+	// 首先尝试解析 duration，如 -1h，出现错误则忽略，解析 time
 	dur, err := time.ParseDuration(s)
 	if err == nil {
 		return TimeOrDur{
@@ -76,6 +79,7 @@ func ParseTimeOrDur(timezone *time.Location, layout, s string) (TimeOrDur, error
 	}
 
 	// Now try to parse as a time
+	// 按指定格式解析，此时出错的话，便抛出错误
 	t, err := time.ParseInLocation(layout, s, timezone)
 	if err != nil {
 		return TimeOrDur{}, errors.Trace(err)

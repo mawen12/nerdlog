@@ -49,8 +49,8 @@ const (
 	parserQuoteStateDoubleEscaped                  // 对应反斜杠 '\\'
 )
 
+// 通用的解析，解析一个字符串，并将特殊字符进行转义，然后按照空格，单引号进行拆分
 // 将 shell 转换为 nerdlog --lstreams 'localhost:22:journalctl' --time -1h --pattern /Error/ --selquery 'time STICKY, message, lstream, *'
-// 结果为：[]
 func Parse(shellCmd string) ([]string, error) {
 	var parts []string
 
