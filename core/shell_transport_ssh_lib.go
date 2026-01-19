@@ -16,10 +16,12 @@ import (
 )
 
 // ShellTransportSSHLib implements ShellTransport over SSH.
+// ShellTransportSSHLib 通过 SSH 实现 ShellTransport。
 type ShellTransportSSHLib struct {
 	params ShellTransportSSHLibParams
 }
 
+// 编译时断言，确保 ShellTransportSSHLib 实现了 ShellTransport 接口
 var _ ShellTransport = &ShellTransportSSHLib{}
 
 func NewShellTransportSSHLib(params ShellTransportSSHLibParams) *ShellTransportSSHLib {
@@ -33,28 +35,36 @@ func NewShellTransportSSHLib(params ShellTransportSSHLibParams) *ShellTransportS
 type ShellTransportSSHLibParams struct {
 	// SSHKeys specifies paths to ssh keys to try, in the given order, until
 	// an existing key is found.
+	// SSHKeys 指定要尝试的 ssh 密钥的路径，按给定顺序，直到找到现有密钥。
 	SSHKeys []string
 
+	// 连接详情
 	ConnDetails ConfigLogStreamShellTransportSSHLib
 
+	// 日志，该日志的命名空间已附加 "TransportSSHLib"
 	Logger *log.Logger
 }
 
+// 尝试连接到 shell。它只是生成一个 goroutine 并立即返回，
+// 该 channel 是一个只能发送数据的通道，其用于将稍后连接结果（或者可能是对附加数据的请求，例如密码短语）传递到提供的通道。
 func (st *ShellTransportSSHLib) Connect(resCh chan<- ShellConnUpdate) {
 	go st.doConnect(resCh)
 }
 
+// 创建调试信息
 func (st *ShellTransportSSHLib) makeDebugInfo(message string) *ShellConnDebugInfo {
 	return &ShellConnDebugInfo{
 		Message: message,
 	}
 }
 
+// 执行连接逻辑
 func (st *ShellTransportSSHLib) doConnect(
 	resCh chan<- ShellConnUpdate,
 ) (res ShellConnResult) {
 	logger := st.params.Logger
 
+	// 连接退出前，检查错误并发送结果
 	defer func() {
 		if res.Err != nil {
 			logger.Errorf("Connection failed: %s", res.Err)
@@ -67,6 +77,7 @@ func (st *ShellTransportSSHLib) doConnect(
 
 	connDetails := st.params.ConnDetails
 
+	// 发送调试信息，表示正在尝试使用内部 ssh 库连接
 	resCh <- ShellConnUpdate{
 		DebugInfo: st.makeDebugInfo(fmt.Sprintf(
 			"Trying to connect using internal ssh library to addr: %s, user: %s",
@@ -74,8 +85,9 @@ func (st *ShellTransportSSHLib) doConnect(
 		)),
 	}
 
-	var sshClient *ssh.Client
+	var sshClient *ssh.Client // golang 内部库
 
+	// 读取客户端配置
 	conf, err := st.getClientConfig(resCh, logger, connDetails.Host.User)
 	if err != nil {
 		res.Err = errors.Annotatef(err, "getting ssh client for %s", connDetails.Host.User)
@@ -244,20 +256,24 @@ func (st *ShellTransportSSHLib) getSSHAuthMethod(resCh chan<- ShellConnUpdate, l
 	sshAuthMethodSharedMtx.Lock()
 	defer sshAuthMethodSharedMtx.Unlock()
 
+	// 检查authMethod是否已缓存
 	if sshAuthMethodShared != nil {
 		return sshAuthMethodShared, nil
 	}
 
 	// Try ssh-agent first
 	var sshAgentErr error
+	// 读取 SSH_AUTH_SOCK 环境变量
 	sshAuthSock := os.Getenv("SSH_AUTH_SOCK")
 	if sshAuthSock != "" {
 		logger.Infof("Trying ssh-agent via SSH_AUTH_SOCK=%s", sshAuthSock)
+		// 连接到 ssh-agent
 		sshAgent, err := net.Dial("unix", sshAuthSock)
 		if err != nil {
 			logger.Infof("Failed to connect to ssh-agent: %s", err.Error())
 			sshAgentErr = errors.Annotatef(err, "using SSH_AUTH_SOCK env var")
 		} else {
+			// 使用 ssh-agent 进行身份验证
 			sshAuthMethodShared = &AuthMethodWMeta{
 				AuthMethod: ssh.PublicKeysCallback(agent.NewClient(sshAgent).Signers),
 				Descr:      "using ssh-agent",
@@ -270,11 +286,13 @@ func (st *ShellTransportSSHLib) getSSHAuthMethod(resCh chan<- ShellConnUpdate, l
 	}
 
 	// Fall back to private key
+	// 退回到私钥
 	logger.Infof("Fallback to parsing ssh key...")
 
 	var keyPath string
 	var keyData []byte
 	var errBuilder strings.Builder
+	// 查找第一个存在的密钥文件
 	for _, keyPath = range st.params.SSHKeys {
 		var err error
 		keyData, err = os.ReadFile(keyPath)
@@ -290,6 +308,7 @@ func (st *ShellTransportSSHLib) getSSHAuthMethod(resCh chan<- ShellConnUpdate, l
 		break
 	}
 
+	// 当没有找到任何密钥文件时，返回错误
 	if len(keyData) == 0 {
 		return nil, errors.Errorf(
 			"failed to read key data from any of the following: %s (%s)",
@@ -298,6 +317,7 @@ func (st *ShellTransportSSHLib) getSSHAuthMethod(resCh chan<- ShellConnUpdate, l
 		)
 	}
 
+	// 解析私钥
 	signer, err := ssh.ParsePrivateKey(keyData)
 	if err != nil {
 		if _, ok := err.(*ssh.PassphraseMissingError); ok {
@@ -305,6 +325,7 @@ func (st *ShellTransportSSHLib) getSSHAuthMethod(resCh chan<- ShellConnUpdate, l
 			// the client code.
 			passphraseCh := make(chan string, 1)
 
+			// 发送数据请求，要求提供密码短语
 			resCh <- ShellConnUpdate{
 				DataRequest: &ShellConnDataRequest{
 					Title:      "SSH key is passphrase-protected",
@@ -319,9 +340,11 @@ func (st *ShellTransportSSHLib) getSSHAuthMethod(resCh chan<- ShellConnUpdate, l
 			// TODO: support teardown; as of now, if the user tries to exit the app,
 			// it'll be stuck on the "Closing connections" stage, until the Ctrl+C is
 			// pressed.
+			// 等待客户端代码提供密码短语
 			passphrase := <-passphraseCh
 
 			var err error
+			// 使用提供的密码短语解析私钥
 			signer, err = ssh.ParsePrivateKeyWithPassphrase(keyData, []byte(passphrase))
 			if err != nil {
 				// Something has failed even with the provided passphrase.
@@ -336,6 +359,7 @@ func (st *ShellTransportSSHLib) getSSHAuthMethod(resCh chan<- ShellConnUpdate, l
 	}
 
 	logger.Infof("Using private key from %s", keyPath)
+	// 保存认证方法到共享变量
 	sshAuthMethodShared = &AuthMethodWMeta{
 		AuthMethod: ssh.PublicKeys(signer),
 		Descr:      fmt.Sprintf("using key %s", keyPath),

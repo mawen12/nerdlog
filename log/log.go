@@ -169,7 +169,7 @@ func (l *Logger) Printf(level LogLevel, format string, a ...interface{}) {
 		return
 	}
 
-	// 如果有命名空间，则加上命名空间前缀，效果为 [namespace] message,否则为 message
+	// 如果有命名空间，则需要在输出格式中加上 [%s] 前缀
 	if l.namespace != "" {
 		printf(l.toStdout, "[%s] %s", l.namespace, fmt.Sprintf(format, a...))
 	} else {

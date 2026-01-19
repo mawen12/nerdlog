@@ -18,6 +18,7 @@ import (
 )
 
 type nerdlogApp struct {
+	// 启动参数
 	params nerdlogAppParams
 
 	options *OptionsShared
@@ -52,17 +53,25 @@ type nerdlogAppParams struct {
 	// initialOptionSets contains strings like "option=value",
 	// like "numlines=1000", in the same way one would execute them in a ":set"
 	// command.
+	// 初始化选项集，包含类似 "option=value" 的字符串，
 	initialOptionSets []string
-	initialQueryData  QueryFull
-	connectRightAway  bool
-	clipboardInitErr  error
-	logLevel          log.LogLevel
-	sshConfigPath     string
-	sshKeys           []string
-
+	// 代表一个查询，组成有：logstreams, time, query, selQuery
+	initialQueryData QueryFull
+	// 是否立即连接并查询日志
+	connectRightAway bool
+	// 剪贴板初始化错误
+	clipboardInitErr error
+	// 日志级别
+	logLevel log.LogLevel
+	// ssh 配置路径
+	sshConfigPath string
+	// ssh 密钥
+	sshKeys []string
+	// logstreams 配置路径，即 --lstreams-config
 	logstreamsConfigPath string
-	cmdHistoryFile       string
-
+	// 命令行历史文件路径
+	cmdHistoryFile string
+	// 是否禁用 journalctl 访问警告
 	noJournalctlAccessWarn bool
 }
 
@@ -258,6 +267,8 @@ func (app *nerdlogApp) initLStreamsManager(
 		// they might be getting a lot of those messages due to those progress
 		// percentage updates; so we just remember the last state, and only update
 		// the UI once we don't have more messages yet.
+		// 我们不想在每个状态更新时都更新 UI，因为由于进度百分比更新，可能会收到大量此类消息；
+		// 因此，我们只记住最后的状态，并且只有在没有更多消息时才更新 UI。
 		var lastState *core.LStreamsManagerState
 		var logResps []*core.LogRespTotal // TODO: perhaps we should also only keep the last one?
 		var bootstrapErrors []error
