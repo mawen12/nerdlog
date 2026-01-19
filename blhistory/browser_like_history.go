@@ -34,6 +34,10 @@ func (h *BLHistory) Add(s string) {
 		Str:  s,
 	}
 
+	// 当用户在历史中回退后 (curIdx < len(items)-1) 再添加新项时
+	// - 截断当前位置之后的所有历史记录
+	// - 这模拟浏览器行为：从历史页面中点击新链接时，前进按钮的历史会被清除
+	// - 假设历史为：[A, B, C, D]，当前索引为1 (B), 添加新项E后，历史变为 [A, B, E],截断 2 之后的历史
 	if len(h.items) > 0 && h.curIdx < len(h.items)-1 {
 		h.items = h.items[:h.curIdx+1]
 	}
