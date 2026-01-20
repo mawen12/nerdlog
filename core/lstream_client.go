@@ -25,6 +25,9 @@ const connectionTimeout = 5 * time.Second
 // Setting useGzip to false is just a simple way to disable gzip, for debugging
 // purposes or w/e, since it's still experimental. Maybe we need to add a flag
 // for it, we'll see.
+// 将useGzip设置为false只是禁用gzip的一种简单方法，用于调试目的或其他目的，
+// 因为它仍然是实验性的。也许我们需要为它添加一个标志，我们会看到的。
+// 将useGzip设置为true，代表启用gzip压缩，可以节省传输数据量
 const useGzip = true
 
 const (
@@ -36,6 +39,9 @@ const (
 	// and the scanner func (returned by getScannerFunc) sees those markers and
 	// buffers gzipped output until it's done, then gunzips it and sends to the
 	// clients, so it's totally opaque for them.
+	// gzipStartMarker和gzipEndMarker在gzip输出的开始和结束时被回显。实际上我们正在执行以下操作：
+	// $ echo gzip_start ; 无论我们需要运行的命令 | gzip ; echo gzip_end
+	// 而扫描器函数（由getScannerFunc返回）会看到这些标记并缓冲gzip输出，直到完成，然后将其解压缩并发送给客户端，因此对它们来说是完全透明的。
 	gzipStartMarker = "gzip_start"
 	gzipEndMarker   = "gzip_end"
 )
@@ -46,12 +52,14 @@ const (
 // TODO: make it dynamic; e.g. generating that day string like "02" requires
 // some extra logic in the agent script for the traditional syslog format
 // (which has it space-padded, not zero-padded).
+// 用于格式化nerdlog_agent.sh的--from和--to参数。
 const queryLogsArgsTimeLayout = "2006-01-02-15:04"
 
 // queryLogsTimestampUntilSecondsTimeLayout is used to format the
 // --timestamp-until-seconds arguments for nerdlog_agent.sh.
 // It needs to match what journalctl *takes as an argument*.
 // TODO: better naming.
+// 
 const queryLogsTimestampUntilSecondsTimeLayout = "2006-01-02 15:04:05"
 
 // queryLogsTimestampUntilPreciseTimeLayout is used to format the
@@ -993,7 +1001,7 @@ func (lsc *LStreamClient) EnqueueCmd(cmd lstreamCmd) {
 // 如果changeName非空，则LStreamClient的名称将被更新；这对于将此LStreamClient与可能存在的另一个具有相同（旧）名称的LStreamClient区分开来非常有用。
 func (lsc *LStreamClient) Close(changeName string) {
 	select {
-	// 发送断开连接请求到断开连接请求通道	
+	// 发送断开连接请求到断开连接请求通道
 	case lsc.disconnectReqCh <- disconnectReq{
 		teardown:   true,
 		changeName: changeName,

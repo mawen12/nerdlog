@@ -8,8 +8,12 @@
             "mode": "auto",
             "program": "${workspaceFolder}/cmd/nerdlog",
             "cwd": "${workspaceFolder}",
-            "env": {},
-            "args": ["--lstreams", "localhost:22:journalctl"]
+            "env": {
+                "TERM": "xterm-256color"
+            },
+            "args": ["--lstreams", "localhost:22:journalctl"],
+            "console": "integratedTerminal",
+            "internalConsoleOptions": "neverOpen"
         },
         {
             "name": "Debug MACOS",
