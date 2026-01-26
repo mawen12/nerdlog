@@ -348,7 +348,7 @@ func (d *DropDown) SetFinishedFunc(handler func(key tcell.Key)) tview.FormItem {
 
 // Draw draws this primitive onto the screen.
 func (d *DropDown) Draw(screen tcell.Screen) {
-	d.Box.DrawForSubclass(screen, d)
+	d.Box.DrawForSubclass(screen, d) // 绘制基础框体
 
 	// Prepare.
 	x, y, width, height := d.GetInnerRect()
@@ -357,7 +357,7 @@ func (d *DropDown) Draw(screen tcell.Screen) {
 		return
 	}
 
-	// Draw label.
+	// Draw label. 当设置了labelWidth，则使用固定宽度设置标签
 	if d.labelWidth > 0 {
 		labelWidth := d.labelWidth
 		if labelWidth > rightLimit-x {

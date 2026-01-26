@@ -40,23 +40,32 @@ type QueryEditViewParams struct {
 }
 
 type QueryEditView struct {
+	// 参数
 	params   QueryEditViewParams
+	// 主视图
 	mainView *MainView
-
+	// flex
 	flex *tview.Flex
-
+	// 回退按钮
 	backBtn *tview.Button
+	// 前进按钮
 	fwdBtn  *tview.Button
-
+	// 事件
 	timeFlex      *tview.Flex
+	// 事件输入
 	timeInput     *tview.InputField
+	// 时区描述
 	timezoneLabel *tview.TextView
+	// lstream 输入框
 	lstreamsInput *tview.InputField
+	// query 输入框
 	queryInput    *tview.InputField
-
+	// 选择输入
 	selectQueryInput   *tview.InputField
+	// 选择按钮
 	selectQueryEditBtn *tview.Button
 
+	// 
 	frame *tview.Frame
 	//
 	//textView *tview.TextView
