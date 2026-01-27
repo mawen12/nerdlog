@@ -22,7 +22,7 @@ const (
 	Error
 )
 
-// 全局日志文件
+// 全局日志文件log/log.go
 var logFile *os.File
 
 // 互斥锁

@@ -7,6 +7,7 @@ require (
 	github.com/dimonomid/ssh_config v0.0.1
 	github.com/gdamore/tcell/v2 v2.6.0
 	github.com/gobwas/glob v0.2.3
+	github.com/google/uuid v1.6.0
 	github.com/juju/errors v0.0.0-20220324005906-d8c5072c94ab
 	github.com/mattn/go-runewidth v0.0.14
 	github.com/mvdan/sh v2.6.4+incompatible
