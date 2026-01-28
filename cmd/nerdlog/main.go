@@ -37,10 +37,9 @@ func main() {
 		// 查询时间，支持相对时间和指定时间，例如：--time -1h
 		flagTime           = pflag.StringP("time", "t", "", "Time range in the same format as accepted by the UI. Examples: '1h', 'Mar27 12:00'")
 		flagLStreamsConfig = pflag.String("lstreams-config", filepath.Join(homeDir, ".config", "nerdlog", "logstreams.yaml"), "logstreams config file to use; set to an empty string to disable reading logstreams config")
-		// 
+		//
 		flagCmdHistoryFile = pflag.String("cmdhistory-file", filepath.Join(homeDir, ".nerdlog_history"), "Command-line history file")
 		// 其内部存储了如下信息：:1768526631165763989:136:0:nerdlog --lstreams 'localhost:22:/home/mawen/logs/monitor.log' --time -1h --pattern /port/ --selquery 'time STICKY, message, lstream, *'
-		// 这是完整的查询
 		flagQueryHistoryFile = pflag.String("queryhistory-file", filepath.Join(homeDir, ".nerdlog_query_history"), "Query history file")
 		// log streams，指定要读取的目标日志信息，例如：--lstreams 'localhost:22:journalctl'
 		flagLStreams = pflag.StringP("lstreams", "h", "", "Logstreams to connect to, as comma-separated glob patterns, e.g. 'foo-*,bar-*'")
@@ -195,7 +194,7 @@ func main() {
 	fmt.Println("")
 	fmt.Println("Closing connections...")
 
-	// 
+	//
 	app.Close()
 	app.Wait()
 

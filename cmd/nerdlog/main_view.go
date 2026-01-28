@@ -56,7 +56,9 @@ type MainViewParams struct {
 	// TODO: support command history
 	OnCmd OnCmdCallback
 
+	// 
 	CmdHistory   *clhistory.CLHistory
+	// 
 	QueryHistory *clhistory.CLHistory
 
 	Logger *log.Logger
@@ -273,6 +275,7 @@ func NewMainView(params *MainViewParams) *MainView {
 	mv.queryInput = tview.NewInputField()
 	// 处理事件
 	mv.queryInput.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		// 支持浏览器的前进/后退等导航
 		event = mv.eventHandlerBrowserLike(event)
 		if event == nil {
 			return nil

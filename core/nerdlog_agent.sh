@@ -8,6 +8,8 @@
 # This script logic is really convoluted and hard to understand, and begs for a
 # major rewrite.
 
+# 当脚本退出时，自动执行一下命令，其中 $? 是上一个命令的退出状态码
+# 该命令用途意为：脚本正常或异常退出时，都会输出 exit_code:后跟状态码，方便调用方获取脚本的退出状态
 trap 'echo "exit_code:$?"' EXIT
 
 # Arguments:
@@ -16,6 +18,7 @@ trap 'echo "exit_code:$?"' EXIT
 
 # Those numbers are supposed to go up as the query progresses; the Go app
 # will then be able to tell which node is the slowest and show info for it.
+
 STAGE_INDEX_FULL=1
 STAGE_INDEX_APPEND=2
 STAGE_QUERYING=3
@@ -28,9 +31,12 @@ SPECIAL_FILENAME_JOURNALCTL="journalctl"
 # 2025-04-27T21:31:11.670468+00:00 myhot systemd[1]: Something happened.
 JOURNALCTL_FORMAT_FLAG="--output=short-iso-precise"
 
+# 索引文件为/tmp/nerdlog_agent_index_*
 indexfile=/tmp/nerdlog_agent_index
 
+# 前一个文件，auto,依赖于logfile_last，自动从 /var/log/messages.1 => /var/log/syslog.1 => journalctl => 报错
 logfile_prev="${SPECIAL_FILENAME_AUTO}"
+# 最新文件， auto，则自动从 /var/log/messages => /var/log/syslog => journalctl => 报错
 logfile_last="${SPECIAL_FILENAME_AUTO}"
 
 positional_args=()
@@ -41,18 +47,27 @@ awktime_month='monthByName[substr($0, 1, 3)]'
 awktime_year='yearByMonth[month]'
 awktime_day='(substr($0, 5, 1) == " ") ? "0" substr($0, 6, 1) : substr($0, 5, 2)'
 awktime_hhmm='substr($0, 8, 5)'
+# 用于awk脚本中提取一行日志的前12个字符，并作为分钟级时间键
 awktime_minute_key='substr($0, 1, 12)'
 # TODO: double check that if any of these is provided manually in a flag,
 # then all of them are provided manually.
 
+# 执行 which gawk 和 which awk，并检查其是否存在
 function find_gawk_binary() { # {{{
+  # 将 which gawk 执行结果赋值给 gawk_path 变量
   gawk_path="$(which gawk)"
+  # 如果上一个命令执行成功（即找到了 gawk 命令）
   if [[ $? == 0 ]]; then
+    # 检查 gawk_path 指向的文件是否可执行
     if [ -x "$gawk_path" ]; then
+      # 获取 gawk 的版本信息，并赋给 awk_version_str 变量
       awk_version_str="$($gawk_path --version)"
+      # 如果获取版本信息成功
       if [[ $? == 0 ]]; then
+        ## 检查版本信息中是否包含 'GNU Awk' 字符串，如果存在，则输出 gawk_path 并退出成功
         if echo "$awk_version_str" | grep -q 'GNU Awk'; then
           # gawk works fine
+          # 输出会被调用方捕获
           echo "$gawk_path"
           exit 0
         fi
@@ -60,13 +75,17 @@ function find_gawk_binary() { # {{{
     fi
   fi
 
+  # 没有找到 gawk，尝试查找 awk 命令
   awk_path="$(which awk)"
   if [[ $? == 0 ]]; then
+    # 检查 awk_path 指向的文件是否可执行
     if [ -x "$awk_path" ]; then
+      # 获取 awk 的版本信息，并赋给 awk_version_str 变量
       awk_version_str="$($awk_path --version)"
       if [[ $? == 0 ]]; then
+        # 检查版本信息中是否包含 'GNU Awk' 字符串，如果存在，则输出 awk_path 并退出成功
         if echo "$awk_version_str" | grep -q 'GNU Awk'; then
-          # awk works fine
+          # 输出会被调用方捕获
           echo "$awk_path"
           exit 0
         fi
@@ -74,17 +93,21 @@ function find_gawk_binary() { # {{{
     fi
   fi
 
+  # 如果都没有找到 gawk 或 awk，或者它们不是 GNU Awk，则退出失败
   exit 1
 } # }}}
 
+# 检测 timezone，从 TZ => timedatectl => /etc/timezone => /usr/share/zoneinfo 依次尝试
 function detect_timezone() { # {{{
   # Prefer TZ env var if available
+  # 如果变量已被设置，则输出并退出
   if [[ "$TZ" != "" ]]; then
     echo "$TZ"
     exit 0
   fi
 
   # Next check timedatectl if available
+  # read from timedatectl
   host_timezone="$(timedatectl show --property=Timezone --value)"
   if [[ $? == 0 ]]; then
     echo "$host_timezone"
@@ -92,6 +115,7 @@ function detect_timezone() { # {{{
   fi
 
   # Resort to /etc/timezone
+  # read from /etc/timezone
   if [ -r /etc/timezone ]; then
     host_timezone="$(cat /etc/timezone)"
     if [[ $? == 0 ]]; then
@@ -101,6 +125,7 @@ function detect_timezone() { # {{{
   fi
 
   # Then resort to browsing zoneinfo files manually
+  # 反推系统时区
   zone_file="$(find /usr/share/zoneinfo  -type f -exec cmp -s /etc/localtime '{}' \; -print)"
   if [[ $? == 0 ]]; then
     host_timezone="$(echo "$zone_file" | sed -e 's|^/usr/share/zoneinfo/||' -e '/posix/d')"
@@ -117,25 +142,35 @@ function detect_timezone() { # {{{
 #
 # Concatenates the global `cmds` array into a single bash command, using " && ".
 # Escapes things properly. The result can be passed to "eval" or "bash -c".
+
+# 使用 && 拼接 cmds 数组中的命令，并进行适当的转义
+# cmds=("tail -c +100 /var/log/syslog" "head -c 500")
 function concat_cmds_array() {
+  # 标识是否为第一个命令
   local first=1
+  # 遍历 cmds 中的每个元素
   for cmd in "${cmds[@]}"; do
+    # 第一个命令前不加 &&，后续命令前加 &&作为连接符
     if [[ $first == 1 ]]; then
       first=0
     else
       echo -n " && "
     fi
+    # 单引号转义，${变量/pattern/replacement} 全部替换，此处是将单引号替换为 '\''，以便在单引号字符串中嵌入单引号
     echo -n "${cmd//\'/\'\"\'\"\'}"
   done
 } # }}}
 
+# 持续解析命令行参数，对于 -param value 这种模式的，需要使用两个 shift，对于 --flag 这种模式的，只需要使用一个 shift
 while [[ $# -gt 0 ]]; do
   case $1 in
+    # 日志文件路径
     -c|--index-file)
       indexfile="$2"
       shift # past argument
       shift # past value
       ;;
+
     --logfile-last)
       logfile_last="$2"
       shift # past argument
@@ -289,6 +324,7 @@ while [[ $# -gt 0 ]]; do
       shift # past argument
       shift # past value
       ;;
+    # 默认为：substr($0, 1, 12)，用户可自行覆盖
     --awktime-minute-key)
       awktime_minute_key="$2"
       shift # past argument
@@ -300,14 +336,16 @@ while [[ $# -gt 0 ]]; do
       exit 1
       ;;
     *)
-      positional_args+=("$1") # save positional arg
+      positional_args+=("$1") # save positional arg 保存非选项参数
       shift # past argument
       ;;
   esac
 done
 
+# 恢复位置参数
 set -- "${positional_args[@]}" # restore positional parameters
 
+# timestamp_until_precise, timestamp_until_seconds, skip_n_latest 必须一起使用
 if [[ $timestamp_until_precise != "" || $timestamp_until_seconds != "" || $skip_n_latest != "" ]]; then
   if [[ "$timestamp_until_precise" == "" ]]; then
     echo "error:--timestamp-until-seconds, --timestamp-until-precise, --skip-n-latest should all be given together, but --timestamp-until-precise is not set" 1>&2
@@ -326,10 +364,10 @@ if [[ $timestamp_until_precise != "" || $timestamp_until_seconds != "" || $skip_
 fi
 
 # Either use the provided current year and month (for tests), or get the actual ones.
+# 当前年份和月份设置
 if [[ "$CUR_YEAR" == "" ]]; then
   CUR_YEAR="$(date +'%Y')"
 fi
-
 if [[ "$CUR_MONTH" == "" ]]; then
   CUR_MONTH="$(date +'%m')"
 fi
@@ -337,6 +375,7 @@ fi
 # TODO: instead of always detecting it, add support for the --awk-binary flag,
 # and only autodetect if it wasn't provided. Also, gotta always do this during
 # logstream_info command.
+# 检查 gawk/awk 是否存在
 awk_binary="$(find_gawk_binary)"
 if [[ $? != 0 ]]; then
   echo "error:gawk (GNU Awk) is a requirement, but not found on the system. Please install it, then retry" 1>&2
@@ -349,6 +388,7 @@ if [[ "${NERDLOG_JOURNALCTL_MOCK}" != "" ]]; then
   journalctl_binary="${NERDLOG_JOURNALCTL_MOCK}"
 fi
 
+# 检测系统类型 uname -s
 os_kind=""
 case "$(uname -s)" in
   Linux)
@@ -370,24 +410,33 @@ esac
 # https://lists.gnu.org/archive/html/info-gnu/2011-06/msg00013.html
 # Since it's so old, not bothering to check the version for now.
 
+
+# 对命令行 logfile_last 未给值时进行处理，分别尝试取值：/var/log/messages => /var/log/syslog => journalctl => 报错
 if [[ "$logfile_last" == "${SPECIAL_FILENAME_AUTO}" ]]; then
+  # 当 /var/log/messages 文件存在，则取该值
   if [ -e /var/log/messages ]; then
     logfile_last=/var/log/messages
+  # 当 /var/log/syslog 文件存在，则取该值  
   elif [ -e /var/log/syslog ]; then
     logfile_last=/var/log/syslog
+  # 当 journalctl 命令存在，则取 journalctl
   elif command -v journalctl > /dev/null 2>&1; then
     logfile_last="${SPECIAL_FILENAME_JOURNALCTL}"
+  # 否则报错  
   else
     echo "error:failed to autodetect log file: neither /var/log/messages nor /var/log/syslog log files are present, and journalctl is not available either. Specify the log file manually" 1>&2
     exit 1
   fi
 fi
 
+# 对命令行 logfile_prev 未给值时进行处理，
 if [[ "$logfile_prev" == "${SPECIAL_FILENAME_AUTO}" ]]; then
+  # 对于logfile_last!=journalctl时，前一个日志文件直接在后面加 .1
   if [[ "$logfile_last" != "${SPECIAL_FILENAME_JOURNALCTL}" ]]; then
     # For now just blindly append ".1" to the first logfile; if it doesn't actually
     # exist, we'll handle this case right below.
     logfile_prev="${logfile_last}.1"
+  # 对于 logfile_prev=journalctl 时，前一个日志文件也设置为 journalctl 
   else
     # Set it to the same special value
     logfile_prev="${SPECIAL_FILENAME_JOURNALCTL}"
@@ -396,14 +445,19 @@ fi
 
 # A simple hack to account for cases when /var/log/syslog.1 doesn't exist:
 # create an empty file and pretend that it's an empty log file.
+# 检查当前一个日志文件不存在时，，创建一个/tmp/nerdlog-empty-file空文件代替
 if [ ! -e "$logfile_prev" ] && [[ "$logfile_prev" != "${SPECIAL_FILENAME_JOURNALCTL}" ]]; then
   echo "debug:prev logfile $logfile_prev doesn't exist, using a dummy empty file /tmp/nerdlog-empty-file" 1>&2
   # TODO: instead of using the same file /tmp/nerdlog-empty-file , maybe
   # generate the name based on the index filename, to make the tests more
   # self-contained.
   logfile_prev="/tmp/nerdlog-empty-file"
+
+  # 非常规文件或文件已经存在了，且不为空，则删除并覆盖
   if [ ! -f "$logfile_prev" ] || [ -s "$logfile_prev" ]; then
+    # 删除文件，删除失败则退出
     rm -f $logfile_prev || exit 1
+    # 创建文件，创建失败则退出
     touch $logfile_prev || exit 1
   fi
 
@@ -411,48 +465,62 @@ if [ ! -e "$logfile_prev" ] && [[ "$logfile_prev" != "${SPECIAL_FILENAME_JOURNAL
   # that file to be the same as the first log file. It's not portable though
   # (not gonna work on BSD), but it's non-essential functionality, so we just
   # ignore any errors here and do nothing then.
+  # 获取文件的创建时间
   ctime=$(stat -c %W $logfile_last 2>/dev/null)
   if [[ $? == 0 ]]; then
+    # 将空占位文件的创建时间设置为和最新日志文件相同
     touch -d "@$ctime" $logfile_prev
   fi
 fi
 
+# 处理命令行第一个参数，因为前面已经重置过了，所以此处读取的是第一个非选项参数
 command="$1"
+# 如果 command 为空，则报错
 if [[ "${command}" == "" ]]; then
   echo "error:command is required" 1>&2
   exit 1
 fi
 
+# 处理命令
 case "${command}" in
+  # query
   query)
     shift
     # Will be handled below.
     ;;
 
+  # logstream_info，用于读取时区，日志文件的首行/最后一行内容，并出输出
   logstream_info)
+    # 读取系统时区
     host_timezone="$(detect_timezone)"
+    # 输出执行结果
     if [[ $? == 0 ]]; then
       echo "host_timezone:$host_timezone"
     else
       echo "warn:failed to detect host timezone"
     fi
 
+    # 处理非 journalctl 的场景
     if [[ "${logfile_last}" != "${SPECIAL_FILENAME_JOURNALCTL}" ]]; then
+      # 当要读取的日志文件不存在，报错退出
       if [ ! -e ${logfile_last} ]; then
         echo "error:${logfile_last} does not exist" 1>&2
         exit 1
       fi
 
+      # 当要读取的日志文件不可读，报错退出
       if [ ! -r ${logfile_last} ]; then
         echo "error:${logfile_last} exists but is not readable, check your permissions" 1>&2
         exit 1
       fi
 
+      # 当要读取的前一个日志文件不存在，报错退出
       if [ ! -e ${logfile_prev} ]; then
         echo "error:${logfile_prev} does not exist" 1>&2
         exit 1
       fi
 
+      # 当要读取的前一个日志文件不可读，报错退出
       if [ ! -r ${logfile_prev} ]; then
         echo "error:${logfile_prev} exists but is not readable, check your permissions" 1>&2
         exit 1
@@ -460,20 +528,28 @@ case "${command}" in
 
       # Print a bunch of example log lines, so that the client can autodetect the
       # format.
+      # 文件存在且有内容
       if [ -s ${logfile_last} ]; then
+        # 读取文件最后一行内容
         last_line="$(tail -n 1 ${logfile_last})" || exit 1
+        # 读取文件第一行内容
         first_line="$(head -n 1 ${logfile_last})" || exit 1
         echo "example_log_line:$last_line"
         echo "example_log_line:$first_line"
       fi
+      # 前一个文件存在且有内容
       if [ -s ${logfile_prev} ]; then
+        # 读取前一个文件最后一行内容
         last_line="$(tail -n 1 ${logfile_prev})" || exit 1
+        # 读取前一个文件第一行内容
         first_line="$(head -n 1 ${logfile_prev})" || exit 1
         echo "example_log_line:$last_line"
         echo "example_log_line:$first_line"
       fi
+    # 处理 journalctl 的场景  
     else
       # We need to use journalctl, check if it's executable
+      # 检查 journalctl 是否存在
       if ! command -v "$journalctl_binary" > /dev/null 2>&1; then
         echo "error:journalctl is not found" 1>&2
         exit 1
@@ -483,12 +559,15 @@ case "${command}" in
       # own logs). Ideally we'd ask journalctl, but it doesn't seem to provide
       # a way to learn this easily, so for now just checking user id and groups
       # manually.
+      # id -u 返回用户Id，id -Gn 返回用户所属的组名列表，检查是否在 admin 或 systemd-journal 组中，
+      # 整体逻辑为：用于既不是root，也不在adm组，也不在systemd-journal组，则打印警告
       if ! [[ "$(id -u)" == 0 || " $(id -Gn) " == *" adm "* || " $(id -Gn) " == *" systemd-journal "* ]]; then
         # User is not root, and is not in the adm or systemd-journal groups.
         # Print a warning so that the client script can show it on the UI somehow.
         echo "warn_journalctl_no_admin_access" 1>&2
       fi
 
+      # 读取最后一行，命令为 journalctl --output=short-iso-precise --quiet -n 1
       # And print one line for the timestamp format autodetection.
       last_line="$($journalctl_binary $JOURNALCTL_FORMAT_FLAG --quiet -n 1)" || exit 1
       echo "example_log_line:$last_line"
@@ -497,6 +576,7 @@ case "${command}" in
     exit 0
     ;;
 
+  # 不允许其他任何命令
   *)
     echo "error:invalid command ${command}" 1>&2
     exit 1
@@ -508,6 +588,9 @@ esac
 # other overhead. With all 24 my-nodes, having percentage being printed with
 # 1% increments, it generates extra traffic of about 290KB per single query,
 # wow. With 5% increments, the overhead is about 70 KB.
+## =================== Query =============================
+
+# 打印百分比，以5%为间隔，且只有当进入新的区间时才会打印，避免重复打印，进度输出到标准错误输出
 awk_func_print_percentage='
 function printPercentage(numCur, numTotal) {
   curPercent = int(numCur/numTotal*20);
@@ -518,8 +601,10 @@ function printPercentage(numCur, numTotal) {
 }
 '
 
+# 将 awk 脚本应用到 logfile 上，而非 journalctl
 function run_awk_script_logfiles {
   awk_pattern=''
+  # 如果用户提供了搜索模式，则构建一个awk过滤脚本
   if [[ "$user_pattern" != "" ]]; then
     awk_pattern="!($user_pattern) {numFilteredOut++; next}"
   fi
@@ -533,20 +618,30 @@ function run_awk_script_logfiles {
   # only do the division when the percentage changes, so we calculate the next
   # point when it'd change, and going forward we just compare it with a simple
   # "<".
+  # 构建awk脚本，并以-b模式执行，
   awk_script='
   '$awk_func_print_percentage'
 
+  # 初始化
   BEGIN {
+    # bytenr 是跟踪字节数, curline 是当前行号，maxlines 是最大行数，lastPercent 刚开始为0
     bytenr=1; curline=0; maxlines='$max_num_lines'; lastPercent=0;
+    # 已过滤的数量
     numFilteredOut=0;
+    # 
     prevMinKey="";
   }
+  # 跟踪字节数,length($0) 是当前行的字节长度，+1 是换行符
   { bytenr += length($0)+1 }
+  # 每100行打印进度
   NR % 100 == 0 {
     printPercentage(bytenr, '$num_bytes_to_scan')
   }
+  # 应用用户提供的过滤模式，比如 !(/ERROR/) {numFilteredOut++; next}，不匹配的行被过滤掉，匹配的行继续处理
   '$awk_pattern'
+
   {
+    # 提取当前行的分钟级时间键
     curMinKey = '"$awktime_minute_key"';
 
     # NOTE: this was a naive attempt to better handle the case when timestamps
@@ -580,9 +675,13 @@ function run_awk_script_logfiles {
 
     '$lines_until_check'
 
+    # 将行数:内容放到lastlines中
     lastlines[curline] = $0;
+    # 将行数:行号放到lastNRs中
     lastNRs[curline] = NR;
+    # 行数+1
     curline++
+    # 当行数达到最大值时，重置为0
     if (curline >= maxlines) {
       curline = 0;
     }
@@ -591,15 +690,18 @@ function run_awk_script_logfiles {
   }
 
   END {
+    # 打印检索总行数，和过滤掉的行数
     print "debug:Filtered out " numFilteredOut " from " NR " lines" > "/dev/stderr"
-
+    # 打印前一个日志文件名称
     print "logfile:'$logfile_prev':0";
+    # 打印当前日志文件名称
     print "logfile:'$logfile_last':'$prevlog_lines'";
 
     for (x in stats) {
       print "s:" x "," stats[x]
     }
 
+    
     for (i = 0; i < maxlines; i++) {
       ln = curline + i;
       if (ln >= maxlines) {
@@ -617,22 +719,27 @@ function run_awk_script_logfiles {
   }
   '
 
+  使用 /usr/bin/gawk -b <脚本> 将额外参数传递给awk脚本
   "$awk_binary" -b "$awk_script" "$@"
   if [[ "$?" != 0 ]]; then
     return 1
   fi
 }
 
+# 将 awk 脚本应用到 journalctl 上
 function run_awk_script_journalctl {
   awk_pattern_check=''
+  # 如果用户提供了搜索模式，则构建一个awk过滤脚本
   if [[ "$user_pattern" != "" ]]; then
     awk_pattern_check="!($user_pattern) {numFilteredOut++; next}"
   fi
 
+  # 跳过最后n行的检查脚本
   awk_skip_n_latest_check=''
   if [[ "$timestamp_until_precise" != "" && "$skip_n_latest" != "" ]]; then
     awk_skip_n_latest_check='
     (needToSkip) {
+      # 提取行记录的时间
       curtime = substr($0, 1, timestampUntilPreciseLen);
 
       # If the timestamp is larger than what we already have, just skip.
