@@ -102,6 +102,7 @@ type LogStreamOptions struct {
 	// right after connecting to the host. A common use case is setting
 	// custom env vars for tests, like: "export TZ=America/New_York", but
 	// might be useful outside of tests as well.
+	// 在 log stream 从 Connecting => ConnectedIdle 后的 bootstrap 阶段开始执行
 	ShellInit []string
 }
 
@@ -430,7 +431,7 @@ func (r *LStreamsResolver) parseLogStreamSpecEntry(s string) ([]LogStream, error
 		// TODO 也许我们还需要类似地处理其他字符串，比如 localhost.localdomain，或者 127.0.0.1，或者 ::1；但不确定它是否真的有价值
 		// 所以目前，只有 localhost 才有这种特殊处理（当第一次打开 Nerdlog 时，它也是默认值）
 		if strings.HasPrefix(ls.host.Addr, "localhost:") {
-			// Use local shell 
+			// Use local shell
 			// 使用本地 shell
 			transport = ConfigLogStreamShellTransport{
 				Localhost: &ConfigLogStreamShellTransportLocalhost{},

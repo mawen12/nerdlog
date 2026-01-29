@@ -8,8 +8,9 @@ type lstreamCmd struct {
 	respCh chan lstreamCmdRes
 
 	// Exactly one of the fields below must be non-nil.
-
+	// 当logstream 状态变为 ConnectedIdle 后开始执行的命令
 	bootstrap *lstreamCmdBootstrap
+	// 当logstream 状态为 ConnectedIdle，且距离上次执行/连接超过40s，会发送ping，作为保活手段
 	ping      *lstreamCmdPing
 	queryLogs *lstreamCmdQueryLogs
 }

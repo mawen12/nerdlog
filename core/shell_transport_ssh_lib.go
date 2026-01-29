@@ -25,6 +25,7 @@ type ShellTransportSSHLib struct {
 var _ ShellTransport = &ShellTransportSSHLib{}
 
 func NewShellTransportSSHLib(params ShellTransportSSHLibParams) *ShellTransportSSHLib {
+	// 构建自定义的命令空间日志记录器
 	params.Logger = params.Logger.WithNamespaceAppended("TransportSSHLib")
 
 	return &ShellTransportSSHLib{
@@ -47,6 +48,7 @@ type ShellTransportSSHLibParams struct {
 
 // 尝试连接到 shell。它只是生成一个 goroutine 并立即返回，
 // 该 channel 是一个只能发送数据的通道，其用于将稍后连接结果（或者可能是对附加数据的请求，例如密码短语）传递到提供的通道。
+// 启动连接，其上游是 lstream_client
 func (st *ShellTransportSSHLib) Connect(resCh chan<- ShellConnUpdate) {
 	go st.doConnect(resCh)
 }
@@ -58,13 +60,11 @@ func (st *ShellTransportSSHLib) makeDebugInfo(message string) *ShellConnDebugInf
 	}
 }
 
-// 执行连接逻辑
-func (st *ShellTransportSSHLib) doConnect(
-	resCh chan<- ShellConnUpdate,
-) (res ShellConnResult) {
+// 负责启动连接，而且将执行过程发送到 DebugInfo，执行出错或成功后，将结果写入到 Result 上
+func (st *ShellTransportSSHLib) doConnect(resCh chan<- ShellConnUpdate) (res ShellConnResult) {
 	logger := st.params.Logger
 
-	// 连接退出前，检查错误并发送结果
+	// 核心，负责将结果写入到 resCh 上
 	defer func() {
 		if res.Err != nil {
 			logger.Errorf("Connection failed: %s", res.Err)
@@ -98,7 +98,7 @@ func (st *ShellTransportSSHLib) doConnect(
 		DebugInfo: st.makeDebugInfo(fmt.Sprintf("Got client config: %s", conf.Descr)),
 	}
 
-	if connDetails.Jumphost != nil {
+	if connDetails.Jumphost != nil { // 处理跳板机场景
 		logger.Infof("Connecting via jumphost")
 		// Use jumphost
 		jumphost, err := st.getJumphostClient(resCh, logger, connDetails.Jumphost)
@@ -122,8 +122,10 @@ func (st *ShellTransportSSHLib) doConnect(
 
 		sshClient = ssh.NewClient(authConn, chans, reqs)
 	} else {
+		// 直接连接
 		logger.Infof("Connecting to %s (%+v)", connDetails.Host.Addr, conf)
 		var err error
+		// 创建ssh连接
 		sshClient, err = ssh.Dial("tcp", connDetails.Host.Addr, conf.ClientConfig)
 		if err != nil {
 			res.Err = errors.Annotatef(err, conf.Descr)
@@ -138,36 +140,42 @@ func (st *ShellTransportSSHLib) doConnect(
 	}
 	logger.Infof("Connected to %s", connDetails.Host.Addr)
 
+	// 创建 ssh 会话
 	sshSession, err := sshClient.NewSession()
 	if err != nil {
 		res.Err = errors.Annotatef(err, conf.Descr)
 		return res
 	}
 
+	// 获取 stdin 管道
 	stdinBuf, err := sshSession.StdinPipe()
 	if err != nil {
 		res.Err = errors.Annotatef(err, conf.Descr)
 		return res
 	}
 
+	// 获取 stdout 管道
 	stdoutBuf, err := sshSession.StdoutPipe()
 	if err != nil {
 		res.Err = errors.Annotatef(err, conf.Descr)
 		return res
 	}
 
+	// 获取 stderr 管道
 	stderrBuf, err := sshSession.StderrPipe()
 	if err != nil {
 		res.Err = errors.Annotatef(err, conf.Descr)
 		return res
 	}
 
+	// 执行 /bin/sh
 	err = sshSession.Start(shellBin)
 	if err != nil {
 		res.Err = errors.Annotatef(err, conf.Descr)
 		return res
 	}
 
+	// 返回带有 client, session, stdin, stdout, stderr 的连接结果
 	res.Conn = &ShellConnSSHLib{
 		sshClient:  sshClient,
 		sshSession: sshSession,
@@ -372,6 +380,7 @@ var (
 	jumphostsSharedMtx sync.Mutex
 )
 
+// 跳板机
 func (st *ShellTransportSSHLib) getJumphostClient(resCh chan<- ShellConnUpdate, logger *log.Logger, jhConfig *ConfigHost) (*ssh.Client, error) {
 	jumphostsSharedMtx.Lock()
 	defer jumphostsSharedMtx.Unlock()
@@ -415,11 +424,16 @@ func (st *ShellTransportSSHLib) getJumphostClient(resCh chan<- ShellConnUpdate, 
 
 // ShellConnSSHLib implements ShellConn for SSH.
 type ShellConnSSHLib struct {
+	// ssh 客户端
 	sshClient  *ssh.Client
+	// ssh 会话
 	sshSession *ssh.Session
 
+	// 输入
 	stdinBuf  io.WriteCloser
+	// 输出
 	stdoutBuf io.Reader
+	// 错误输出
 	stderrBuf io.Reader
 }
 
@@ -438,8 +452,12 @@ func (c *ShellConnSSHLib) Stderr() io.Reader {
 }
 
 // Close closes underlying SSH connection.
+// 关闭
 func (c *ShellConnSSHLib) Close() {
+	// 关闭输入
 	c.stdinBuf.Close()
+	// 关闭会话
 	c.sshSession.Close()
+	// 关闭客户端
 	c.sshClient.Close()
 }

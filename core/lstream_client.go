@@ -59,7 +59,6 @@ const queryLogsArgsTimeLayout = "2006-01-02-15:04"
 // --timestamp-until-seconds arguments for nerdlog_agent.sh.
 // It needs to match what journalctl *takes as an argument*.
 // TODO: better naming.
-// 
 const queryLogsTimestampUntilSecondsTimeLayout = "2006-01-02 15:04:05"
 
 // queryLogsTimestampUntilPreciseTimeLayout is used to format the
@@ -68,6 +67,8 @@ const queryLogsTimestampUntilSecondsTimeLayout = "2006-01-02 15:04:05"
 // TODO: better naming.
 const queryLogsTimestampUntilPreciseTimeLayout = "2006-01-02T15:04:05.000000"
 
+// 内置脚本文件 nerdlog_agent.sh 的内容
+//
 //go:embed nerdlog_agent.sh
 var nerdlogAgentSh string
 
@@ -102,6 +103,7 @@ type LStreamClient struct {
 	// transport regarding the connection.
 	connDebugMessages []string
 
+	// 在底层的transport连接成功后，开始执行其中的首个命令
 	cmdQueue   []lstreamCmd
 	curCmdCtx  *lstreamCmdCtx
 	nextCmdIdx int
@@ -204,15 +206,21 @@ func (c *connCtx) getStderrLinesCh() chan string {
 // LStreamClientUpdate represents an update from logstream client. Name is always
 // populated and it's the logstream's name, and from all the other fields, exactly
 // one field must be non-nil.
+// 代表从 logstream 客户端发生变更
 type LStreamClientUpdate struct {
 	Name string
 
+	// 发生状态变更
 	State *LStreamClientUpdateState
 
-	ConnDetails      *ConnDetails
+	// 连接详情，这是在 Connecting 状态时，logstream client 的底层 transport 连接过程中出现的信息
+	ConnDetails *ConnDetails
+	//
 	BootstrapDetails *BootstrapDetails
-	BusyStage        *BusyStage
+	//
+	BusyStage *BusyStage
 
+	// 数据请求，这是在 Connecting 状态时,logstream client 的底层 transport 连接过程中需要用户输入额外的信息，以便连接继续下去
 	DataRequest *ShellConnDataRequest
 
 	// If TornDown is true, it means it's the last update from that client.
@@ -225,12 +233,15 @@ type LStreamClientUpdateState struct {
 }
 
 type LStreamClientParams struct {
+	// 目标
 	LogStream LogStream
 
 	// SSHKeys specifies paths to ssh keys to try, in the given order, until
 	// an existing key is found.
+	// SSH 密钥
 	SSHKeys []string
 
+	// 用于打印的日志
 	Logger *log.Logger
 
 	// ClientID is just an arbitrary string (should be filename-friendly though)
@@ -238,26 +249,32 @@ type LStreamClientParams struct {
 	//
 	// Needed to make sure that different clients won't get conflicts over those
 	// files when using the tool concurrently on the same nodes.
+
+	// 客户端ID
 	ClientID string
 
+	// 客户端变更通道，当logstream发生变更时，会通过该通道传递消息
+	// 场景1：state 变更
 	UpdatesCh chan<- *LStreamClientUpdate
 
+	// 时钟
 	Clock clock.Clock
 }
 
 // createTransport creates a shell transport accordingly to the provided
 // config. The config must be valid (e.g. it should contain exactly one item),
 // otherwise createTransport panics.
-func createTransport(
-	config ConfigLogStreamShellTransport, sshKeys []string, logger *log.Logger,
-) ShellTransport {
+// 创建传输通道，主要是基于提供的配置来构造，支持三种：SSHLib/CustomCmd/Localhost，底层实现两种：SSHLib/CustomCmd，其中localhost也使用CustomCmd
+// 此处仅创建，但是不会尝试连接
+func createTransport(config ConfigLogStreamShellTransport, sshKeys []string, logger *log.Logger) ShellTransport {
 	var transport ShellTransport
 
-	if config.SSHLib != nil {
-		if transport != nil {
-			panic("transport config is ambiguous")
-		}
+	if config.SSHLib != nil { // 基于 ssh-lib
+		// if transport != nil {
+		// 	panic("transport config is ambiguous")
+		// }
 
+		// 创建基于 ssh-lib 的通道
 		transport = NewShellTransportSSHLib(ShellTransportSSHLibParams{
 			SSHKeys:     sshKeys,
 			ConnDetails: *config.SSHLib,
@@ -266,11 +283,13 @@ func createTransport(
 		})
 	}
 
-	if config.CustomCmd != nil {
+	if config.CustomCmd != nil { // 基于自定义命令
+		// 不允许同时有SSHLib和CustomCmd
 		if transport != nil {
 			panic("transport config is ambiguous")
 		}
 
+		// 创建基于自定义命令的通道
 		transport = NewShellTransportCustomCmd(ShellTransportCustomCmdParams{
 			ShellCommand: config.CustomCmd.ShellCommand,
 			EnvOverride:  config.CustomCmd.EnvOverride,
@@ -279,18 +298,22 @@ func createTransport(
 		})
 	}
 
-	if config.Localhost != nil {
+	if config.Localhost != nil { // 处理连接本地的场景
+		// 不允许同时有 SSHLib / CustomCmd 的场景
 		if transport != nil {
 			panic("transport config is ambiguous")
 		}
 
+		// 基于本地的自定义命令的通道
 		transport = NewShellTransportCustomCmd(ShellTransportCustomCmdParams{
+			// /bin/sh
 			ShellCommand: LocalShellCommand,
 
 			Logger: logger,
 		})
 	}
 
+	// 确保传输通道创建成功
 	if transport == nil {
 		panic("transport config is empty")
 	}
@@ -298,39 +321,49 @@ func createTransport(
 	return transport
 }
 
+// 创建LogStream客户端，并使用独立的goroutine启动运行
 func NewLStreamClient(params LStreamClientParams) *LStreamClient {
+	// 时钟必填
 	if params.Clock == nil {
 		// For details on why not default to the real clock:
 		// https://dmitryfrank.com/articles/mocking_time_in_go#caveat_with_defaulting_to_real_clock
 		panic("Clock is nil")
 	}
 
+	// 为日志添加命名空间
 	params.Logger = params.Logger.WithNamespaceAppended(
 		fmt.Sprintf("LSClient_%s", params.LogStream.Name),
 	)
 
+	// 构建底层传输通道
 	transport := createTransport(params.LogStream.Transport, params.SSHKeys, params.Logger)
 
+	// 构造 log stream 客户端
 	lsc := &LStreamClient{
 		params: params,
-
+		// 负责和远程通信
 		transport: transport,
-
+		// 时区
 		timezone: "UTC",
+		//
 		location: time.UTC,
-
-		state:        LStreamClientStateDisconnected,
+		// 初始状态为 Disconnected
+		state: LStreamClientStateDisconnected,
+		// 用于支持缓冲的命令通道
 		enqueueCmdCh: make(chan lstreamCmd, 32),
-
-		disconnectReqCh:              make(chan disconnectReq, 1),
+		// 用于支持断开连接的通道
+		disconnectReqCh: make(chan disconnectReq, 1),
+		//
 		disconnectedBeforeTeardownCh: make(chan struct{}),
 	}
 
 	//debugFile, _ := os.Create("/tmp/lsclient_debug.log")
 	//lsc.debugFile = debugFile
 
+	// 状态变更为连接中，通知上游，并使用底层transport进行连接，并使用 connectUpdCh 接收连接进度、错误信息、成功结果
 	lsc.changeState(LStreamClientStateConnecting)
 
+	// goroutine 异步处理
 	go lsc.run()
 
 	return lsc
@@ -362,16 +395,20 @@ func isStateConnected(state LStreamClientState) bool {
 
 // changeState 更新当前状态
 func (lsc *LStreamClient) changeState(newState LStreamClientState) {
+	// 旧状态
 	oldState := lsc.state
 
 	// Properly leave old state
-	// 如果之前是已连接状态，而现在不是已连接状态，则关闭连接
+	// 从 Connected => !Connected，需要关闭连接
 	if isStateConnected(oldState) && !isStateConnected(newState) {
 		// Initiate disconnect
+		// 关闭transport的connection
 		lsc.conn.conn.Close()
 	}
 
+	// 处理旧状态
 	switch oldState {
+	// 以前是连接中时，会监听底层的transport连接进度而使用的通道，变更状态后，需要置空
 	case LStreamClientStateConnecting:
 		lsc.connectUpdCh = nil
 	case LStreamClientStateConnectedBusy:
@@ -380,8 +417,9 @@ func (lsc *LStreamClient) changeState(newState LStreamClientState) {
 	}
 
 	// Enter new state
-
+	// 更新状态
 	lsc.state = newState
+	// 状态更新，触发 logstream 客户端更新，
 	lsc.sendUpdate(&LStreamClientUpdate{
 		State: &LStreamClientUpdateState{
 			OldState: oldState,
@@ -389,26 +427,34 @@ func (lsc *LStreamClient) changeState(newState LStreamClientState) {
 		},
 	})
 
+	// 处理新状态
 	switch lsc.state {
+	// 连接中，丢弃之前的所有命令、消息，并尝试使用transport进行实际连接
 	case LStreamClientStateConnecting:
 		// Forget whatever queued command we might have.
+		// 特定于每次连接要执行的命令
 		lsc.cmdQueue = nil
 		// Forget whatever conn debug messages we've accumulated.
+		// 特定于每次连接要执行的命令
 		lsc.connDebugMessages = nil
 
 		// Initiate new connection
 		lsc.numConnAttempts++
+		// 其用于接收底层 transport 连接过程中的信息
 		lsc.connectUpdCh = make(chan ShellConnUpdate, 1)
+		// 底层的 transport 开始连接
 		lsc.transport.Connect(lsc.connectUpdCh)
-
+	// 从之前 Connecting 过来的状态，底层transport已经连接成功了
 	case LStreamClientStateConnectedIdle:
+		// 获取到待执行的cmd队列，获取首个命令，
 		if len(lsc.cmdQueue) > 0 {
 			nextCmd := lsc.cmdQueue[0]
 			lsc.cmdQueue = lsc.cmdQueue[1:]
-
+			// 开始执行命令
 			lsc.startCmd(nextCmd)
 		}
 
+	// 清空transport底层的connection
 	case LStreamClientStateDisconnected:
 		lsc.conn = nil
 	}
@@ -445,65 +491,83 @@ func (lsc *LStreamClient) sendCmdResp(resp interface{}, err error) {
 }
 
 func (lsc *LStreamClient) run() {
+	// 每隔1秒的定时器
 	ticker := time.NewTicker(1 * time.Second)
 	var connectAfter time.Time
 	var lastUpdTime time.Time
 
 	for {
 		select {
+		// 对于transport连接中的情况
 		case upd := <-lsc.connectUpdCh:
-			if dbg := upd.DebugInfo; dbg != nil {
+
+			if dbg := upd.DebugInfo; dbg != nil { // 收到连接中的信息
 				// Got some debug info about the connection.
+				// 累积连接信息
 				lsc.connDebugMessages = append(lsc.connDebugMessages, dbg.Message)
 
+				// 将连接中的消息发送给上游
 				lsc.sendUpdate(&LStreamClientUpdate{
 					ConnDetails: lsc.makeConnDetailsMsg(""),
 				})
-			} else if dataReq := upd.DataRequest; dataReq != nil {
+			} else if dataReq := upd.DataRequest; dataReq != nil { // 收到获取交互信息的场景，即需要用户输入某些信息
 				// We need some data from the user.
-
+				// 将信息发送到上游，这是一个数据请求
 				lsc.sendUpdate(&LStreamClientUpdate{
 					DataRequest: dataReq,
 				})
-			} else if res := upd.Result; res != nil {
+			} else if res := upd.Result; res != nil { // 连接已经结束，可能是成功，也可能是失败
 				// The connection has either succeeded or failed.
 
-				if res.Err != nil {
+				if res.Err != nil { // 连接失败了，
 					lsc.params.Logger.Errorf("Shell connection failed: %s", res.Err.Error())
+					// 发送连接失败信息给上游
 					lsc.sendUpdate(&LStreamClientUpdate{
 						ConnDetails: lsc.makeConnDetailsMsg(fmt.Sprintf("attempt %d: %s", lsc.numConnAttempts, res.Err.Error())),
 					})
 
+					// 连接状态置为 Disconnected
 					lsc.changeState(LStreamClientStateDisconnected)
 					if lsc.tearingDown {
 						close(lsc.disconnectedBeforeTeardownCh)
 						continue
 					}
 
+					// 设置在未来2s
 					connectAfter = lsc.params.Clock.Now().Add(2 * time.Second)
 					continue
 				}
 
+				// 连接成功的场景
 				lsc.params.Logger.Infof("Shell connection succeeded, starting bootstrap")
 
+				// 重置尝试连接计数
 				lsc.numConnAttempts = 0
 
+				// 获取最新的更新时间
 				lastUpdTime = lsc.params.Clock.Now()
 
+				// 输出通道，最多同时塞入32行
 				stdoutLinesCh := make(chan string, 32)
+				// 错误输出通道，最多同时塞入32行
 				stderrLinesCh := make(chan string, 32)
 
+				// 开启一个goroutine，持续读取 stdout 中的信息
 				go getScannerFunc("stdout", res.Conn.Stdout(), stdoutLinesCh)()
+				// 开启一个goroutine，持续读取 stderr 中的信息
 				go getScannerFunc("stderr", res.Conn.Stderr(), stderrLinesCh)()
 
+				// 封装 conn，对外暴露可读取stdout和stderr的通道
 				lsc.conn = &connCtx{
 					conn:          res.Conn,
 					stdoutLinesCh: stdoutLinesCh,
 					stderrLinesCh: stderrLinesCh,
 				}
+				// 状态变更为 ConnectedIdle，开始执行 cmdQueue 中的首个命令
 				lsc.changeState(LStreamClientStateConnectedIdle)
 
 				// Send bootstrap command
+				// 开始执行 bootstrap 命令
 				lsc.startCmd(lstreamCmd{
 					bootstrap: &lstreamCmdBootstrap{},
 				})
@@ -841,13 +905,18 @@ func (lsc *LStreamClient) run() {
 			//lsc.stdinBuf.Write([]byte("\n"))
 			//}
 
+		// 到1s后，
 		case <-ticker.C:
+			// 对于存活中的连接，每隔40s发送 ping 命令
 			if lsc.state == LStreamClientStateConnectedIdle && time.Since(lastUpdTime) > 40*time.Second {
 				lsc.startCmd(lstreamCmd{
 					ping: &lstreamCmdPing{},
 				})
+				// 	connectAfter 只有在Connecting => Disconnected 时，才会设置
 			} else if !connectAfter.IsZero() {
+				// 更新
 				connectAfter = time.Time{}
+				// 尝试重新连接
 				lsc.changeState(LStreamClientStateConnecting)
 			}
 
@@ -882,8 +951,11 @@ func (lsc *LStreamClient) run() {
 	}
 }
 
+// 发送消息给上游
 func (lsc *LStreamClient) sendUpdate(upd *LStreamClientUpdate) {
+	// 写入当前logstream的名称
 	upd.Name = lsc.params.LogStream.Name
+	// 写给上游
 	lsc.params.UpdatesCh <- upd
 }
 
@@ -909,6 +981,7 @@ func scanLinesPreserveCarriageReturn(data []byte, atEOF bool) (advance int, toke
 
 func getScannerFunc(name string, reader io.Reader, linesCh chan<- string) func() {
 	return func() {
+		// 在函数结束时，关闭通道，不再接收信息
 		defer func() {
 			close(linesCh)
 		}()
@@ -1023,41 +1096,56 @@ func (lsc *LStreamClient) addCmdToQueue(cmd lstreamCmd) {
 	lsc.cmdQueue = append(lsc.cmdQueue, cmd)
 }
 
+// 在 ConnectedIdle 状态下执行的命令
 func (lsc *LStreamClient) startCmd(cmd lstreamCmd) {
 	cmdCtx := &lstreamCmdCtx{
 		cmd: cmd,
 		idx: lsc.nextCmdIdx,
 	}
 
+	// 设置当前正在执行的命令
 	lsc.curCmdCtx = cmdCtx
 	lsc.nextCmdIdx++
 
 	switch {
+	// 启动，在Connecting => ConnectedIdle 后，开始执行的命令
 	case cmdCtx.cmd.bootstrap != nil:
 		lsc.params.Logger.Verbose3f("Starting command: bootstrap %+v", cmdCtx.cmd.bootstrap)
-
+		// 设置boostrap标志位
 		cmdCtx.bootstrapCtx = &lstreamCmdCtxBootstrap{}
 
+		// 获取输入缓冲区
 		stdinBuf := lsc.conn.conn.Stdin()
 
+		// 写入 echo reset_output
 		stdinBuf.Write([]byte("echo reset_output\n"))
+		// 写入 echo reset_output 1>&2,该写入会将内容重定向到，用于可以在 stderr 中读取到
 		stdinBuf.Write([]byte("echo reset_output 1>&2\n"))
 
 		// Make sure that we're in the user's home directory. In most cases it's
 		// redundant: when we connect via ssh, we're already in the home dir; but
 		// for localhost, it's not; so setting it explicitly.
+		// 切换到用户主目录，一般而言就是在 home 目录下，但是对于 localhost 而言却不是
 		stdinBuf.Write([]byte("cd\n"))
 
 		// Execute whatever arbitrary init commands.
+		// 依次执行 ShellInit 的命令
 		for _, cmd := range lsc.params.LogStream.Options.ShellInit {
 			lsc.params.Logger.Verbose3f("Running shell init command: %s", cmd)
 			stdinBuf.Write([]byte(cmd))
 			stdinBuf.Write([]byte("\n"))
 		}
 
+		// 开始写入 nerdlog_agent.sh 的脚本内容到/tmp目录下，完成命令为：
+		// ( cat <<- 'EOF' > /tmp/nerdlog_agent_<clientId>_<filepathId>.sh
+		// 	<nerdlogAgentSh content>
+		// EOF
+		// if [ $? -ne 0]; then echo 'bootstrap failed'; exit 1; fi
+		// )
 		stdinBuf.Write([]byte("("))
 
 		stdinBuf.Write([]byte("  cat <<- 'EOF' > " + lsc.getLStreamNerdlogAgentPath() + "\n" + nerdlogAgentSh + "EOF\n"))
+		// 如果该命令的执行结果为 非0，则表示写入失败，并退出
 		stdinBuf.Write([]byte("  if [ $? -ne 0 ]; then echo 'bootstrap failed'; exit 1; fi\n"))
 
 		var parts []string
@@ -1087,6 +1175,7 @@ func (lsc *LStreamClient) startCmd(cmd lstreamCmd) {
 		stdinBuf.Write([]byte(")\n"))
 		stdinBuf.Write([]byte("echo exit_code:$?\n"))
 
+	// ping 命令
 	case cmdCtx.cmd.ping != nil:
 		lsc.params.Logger.Verbose3f("Starting command: ping %+v", cmdCtx.cmd.ping)
 		cmdCtx.pingCtx = &lstreamCmdCtxPing{}
@@ -1095,7 +1184,7 @@ func (lsc *LStreamClient) startCmd(cmd lstreamCmd) {
 		stdinBuf := lsc.conn.conn.Stdin()
 		stdinBuf.Write([]byte(cmd))
 		stdinBuf.Write([]byte("echo exit_code:$?\n"))
-
+	// queryLogs 命令
 	case cmdCtx.cmd.queryLogs != nil:
 		lsc.params.Logger.Verbose3f("Starting command: queryLogs %+v", cmdCtx.cmd.queryLogs)
 		cmdCtx.queryLogsCtx = &lstreamCmdCtxQueryLogs{
@@ -1186,6 +1275,7 @@ func (lsc *LStreamClient) startCmd(cmd lstreamCmd) {
 		// Instead, the agent script itself has a trap which prints this line for
 		// us.
 
+	// 非法命令
 	default:
 		panic(fmt.Sprintf("invalid command %+v", cmdCtx.cmd))
 	}
@@ -1740,6 +1830,7 @@ func shellQuote(s string) string {
 		return s
 	}
 
+	// 将 s 中的 ' 替换为 '"'"'
 	return fmt.Sprintf("'%s'", strings.Replace(s, "'", "'\"'\"'", -1))
 }
 

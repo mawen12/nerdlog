@@ -7,6 +7,7 @@ import "io"
 // supported as well, and maybe something else.
 // ShellTransport 提供了一个抽象，用于获取对主机的 shell 访问；
 // 例如通过 SSH 或本地 shell。将来，tsh（Teleport）也可能得到支持，甚至可能还有其他东西。
+// 其实现有连个
 type ShellTransport interface {
 	// Connect attempts to connect to the shell. It just spawns a goroutine and
 	// returns immediately, and later on the result (or maybe requests for
@@ -32,7 +33,7 @@ type ShellConn interface {
 
 // ShellConnUpdate contains the update from ssh connection. Exactly one
 // field must be non-nil.
-// ShellConnUpdate 包含来自 ssh 连接的更新。恰好有一个字段必须为非 nil。
+// ShellConnUpdate 包含了连接过程中的进展信息、结果，交互请求
 type ShellConnUpdate struct {
 	// Info contains some debugging info about the connection, typically sent
 	// before trying to connect.
@@ -55,6 +56,7 @@ type ShellConnUpdate struct {
 // ShellConnDebugInfo 包含有关连接的一些调试人类可读信息。
 type ShellConnDebugInfo struct {
 	// Message contains some arbitrary human-readable details about the connection.
+	// 连接调试消息
 	Message string
 }
 
@@ -62,8 +64,10 @@ type ShellConnDebugInfo struct {
 // successful, Conn is non-nil; otherwise, Err is non-nil.
 // 包含连接结果。如果连接成功，Conn 为非 nil；否则，Err 为非 nil。
 type ShellConnResult struct {
+	// 连接，基于 CustomCmd/SSHLib两种实现之一
 	Conn ShellConn
-	Err  error
+	// 当连接出错时
+	Err error
 }
 
 // ShellConnDataRequest contains request for additional data from the user

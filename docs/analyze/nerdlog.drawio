@@ -1,0 +1,78 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.0.3 Chrome/140.0.7339.249 Electron/38.7.0 Safari/537.36" version="29.0.3" pages="2">
+  <diagram name="shell_transport" id="eE0aqLy9RKbdboVrKcPP">
+    <mxGraphModel dx="321" dy="633" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="zjHzwiYIbiffskN4otEO-1" value="«interface»&lt;br&gt;&lt;b&gt;ShellTransport&lt;/b&gt;" style="html=1;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="320" y="160" width="110" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="zjHzwiYIbiffskN4otEO-4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;" edge="1" parent="1" source="zjHzwiYIbiffskN4otEO-2" target="zjHzwiYIbiffskN4otEO-1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="zjHzwiYIbiffskN4otEO-2" value="ShellTransportCustomCmd" style="html=1;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="170" y="280" width="190" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="zjHzwiYIbiffskN4otEO-5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;" edge="1" parent="1" source="zjHzwiYIbiffskN4otEO-3" target="zjHzwiYIbiffskN4otEO-1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="zjHzwiYIbiffskN4otEO-3" value="ShellTransportSSHLib" style="html=1;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="400" y="280" width="190" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="zjHzwiYIbiffskN4otEO-6" value="«interface»&lt;br&gt;&lt;b&gt;ShellConn&lt;/b&gt;" style="html=1;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="320" y="400" width="110" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="zjHzwiYIbiffskN4otEO-10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;" edge="1" parent="1" source="zjHzwiYIbiffskN4otEO-7" target="zjHzwiYIbiffskN4otEO-6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="zjHzwiYIbiffskN4otEO-7" value="ShellConnSSHLib" style="html=1;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="400" y="520" width="190" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="zjHzwiYIbiffskN4otEO-9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;" edge="1" parent="1" source="zjHzwiYIbiffskN4otEO-8" target="zjHzwiYIbiffskN4otEO-6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="zjHzwiYIbiffskN4otEO-8" value="ShellConnCustomCmd" style="html=1;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="170" y="520" width="190" height="50" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="Ydvnq4tCoAYVsE_U79uu" name="logstream client">
+    <mxGraphModel dx="530" dy="1044" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="PNkzGyY45ULT1jIf-S2b-1" value="状态变更" style="rounded=0;whiteSpace=wrap;html=1;fontSize=18;" vertex="1" parent="1">
+          <mxGeometry x="120" y="40" width="840" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="PNkzGyY45ULT1jIf-S2b-2" value="开始" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;" vertex="1" parent="1">
+          <mxGeometry x="120" y="200" width="80" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="PNkzGyY45ULT1jIf-S2b-3" value="&lt;span&gt;LStreamClientStateDisconnected&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=16;labelBorderColor=none;labelBackgroundColor=none;fillColor=#f5f5f5;fontColor=#333333;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="280" y="210" width="280" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="PNkzGyY45ULT1jIf-S2b-5" value="LStreamClientStateConnecting" style="rounded=1;whiteSpace=wrap;html=1;fontSize=16;labelBorderColor=none;labelBackgroundColor=none;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="640" y="210" width="280" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="PNkzGyY45ULT1jIf-S2b-6" value="&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;1.刚开始创建 logstream client 时&lt;/div&gt;&lt;div&gt;2.底层的transport刚创建好&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="280" y="320" width="280" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="PNkzGyY45ULT1jIf-S2b-7" value="&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;1.开始使用transport发起连接&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="640" y="320" width="280" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="PNkzGyY45ULT1jIf-S2b-8" value="LStreamClientStateDisconnected" style="rounded=1;whiteSpace=wrap;html=1;fontSize=16;labelBorderColor=none;labelBackgroundColor=none;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="210" width="280" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="PNkzGyY45ULT1jIf-S2b-9" value="&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;1.底层transport处于某些原因无法连接成功后的结果&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="320" width="280" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="PNkzGyY45ULT1jIf-S2b-10" value="LStreamClientStateConnectedIdle" style="rounded=1;whiteSpace=wrap;html=1;fontSize=16;labelBorderColor=none;labelBackgroundColor=none;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="530" width="280" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="PNkzGyY45ULT1jIf-S2b-11" value="&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;1.底层transport连接成功后的结果&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="640" width="280" height="160" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

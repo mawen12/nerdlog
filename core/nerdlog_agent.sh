@@ -164,28 +164,31 @@ function concat_cmds_array() {
 # 持续解析命令行参数，对于 -param value 这种模式的，需要使用两个 shift，对于 --flag 这种模式的，只需要使用一个 shift
 while [[ $# -gt 0 ]]; do
   case $1 in
-    # 日志文件路径
+    # 索引文件路径
     -c|--index-file)
       indexfile="$2"
       shift # past argument
       shift # past value
       ;;
-
+    # 当前日志文件
     --logfile-last)
       logfile_last="$2"
       shift # past argument
       shift # past value
       ;;
+    # 上一个日志文件  
     --logfile-prev)
       logfile_prev="$2"
       shift # past argument
       shift # past value
       ;;
+    # 开始查询的时间，格式为：2006-01-02-15:04  
     -f|--from)
       from="$2"
       shift # past argument
       shift # past value
       ;;
+    # 结束查询的时间，格式为：2006-01-02-15:04  
     -t|--to)
       to="$2"
       shift # past argument
@@ -293,7 +296,7 @@ while [[ $# -gt 0 ]]; do
       shift # past argument
       shift # past value
       ;;
-
+    # 是否刷新索引，如果需要刷新，则删除并重建索引文件
     --refresh-index)
       refresh_index="1"
       shift # past argument
@@ -736,32 +739,40 @@ function run_awk_script_journalctl {
 
   # 跳过最后n行的检查脚本
   awk_skip_n_latest_check=''
+  # 只有当 timestamp_until_precise 和 skip_n_latest 都被提供时，才启用该检查脚本
   if [[ "$timestamp_until_precise" != "" && "$skip_n_latest" != "" ]]; then
     awk_skip_n_latest_check='
+    # 如果还需要跳过行
     (needToSkip) {
       # 提取行记录的时间
       curtime = substr($0, 1, timestampUntilPreciseLen);
 
       # If the timestamp is larger than what we already have, just skip.
+      # 如果当前时间大于 timestamp_until_precise，则跳过
       if (curtime > timestampUntilPrecise) {
         next;
       }
 
       # If the timestamp is exactly the same as what we already have,
       # skip the skip_n_latest lines.
+      # 如果时间戳和 timestamp_until_precise 相同，则跳过 skip_n_latest 行
       if (curtime == timestampUntilPrecise) {
+        # 计数相同时间戳的行数
         numSameTimestamp++;
+        # 如果已经跳过了足够的行，则不再跳过
         if (numSameTimestamp <= '"$skip_n_latest"') {
           next;
         }
 
         # We have skipped enough lines, remember that
+        # 我们已经跳过了足够的行，记住这一点
         print "debug:Skipped " NR-1 " latest lines" > "/dev/stderr"
         needToSkip = 0;
       }
 
       # If the timestamp is earlier than what we already have,
       # remember that we are done skipping, to avoid doing useless work.
+      # 如果当前时间小于 timestamp_until_precise，则不再跳过
       if (curtime < timestampUntilPrecise) {
         print "debug:Skipped " NR-1 " latest lines" > "/dev/stderr"
         needToSkip = 0;
@@ -771,6 +782,7 @@ function run_awk_script_journalctl {
   fi
 
   early_exit_check=''
+  # 如果设置了最大行数，则在达到该行数后提前退出
   if [[ "$stop_after_max_num_lines" != "" ]]; then
     early_exit_check='curline >= maxlines {
       print "debug:Exiting early after collecting " curline " lines" > "/dev/stderr"
@@ -785,6 +797,7 @@ function run_awk_script_journalctl {
   # store in the index ("2006-01-02-15:04"), and returns the corresponding unix
   # timestamp.
   function indexTimestrToTimestamp(timestr) {
+    # 从时间戳中提取年/月/日/时/分
     year = substr(timestr, 1, 4);
     month = substr(timestr, 6, 2);
     day = substr(timestr, 9, 2);
@@ -809,6 +822,7 @@ function run_awk_script_journalctl {
     earliestTimestamp=0;
     latestTimestamp=0;
 
+    # 处理指定了 from 的场景
     if ("'$from'" != "") {
       earliestTimestamp = indexTimestrToTimestamp("'$from'");
     } else {
@@ -820,14 +834,17 @@ function run_awk_script_journalctl {
       # because timespanSeconds will be 0.
     }
 
+    # 处理指定了 to 的场景
     if ("'$to'" != "") {
       latestTimestamp = indexTimestrToTimestamp("'$to'");
     } else {
       # No "to" timestamp; just use the current time.
+      # 未指定时，便使用当前时间
       latestTimestamp = systime();
     }
 
     timespanSeconds = 0;
+    # 计算时间跨度
     if (earliestTimestamp != 0 && latestTimestamp != 0) {
       timespanSeconds = latestTimestamp - earliestTimestamp;
     }
@@ -838,18 +855,22 @@ function run_awk_script_journalctl {
     # timestamp and other details: instead, they just add padding with spaces,
     # which breaks our parsing; so we manually replace this padding with the
     # details from the previous non-padded line.
+    # 当解析到的行以空格开头时，表示是多行日志的续行
     if (substr($0, 1, 1) == " ") {
       # Find out the number of leading spaces
+      # 计算前导空格数量
       numLeadingSpace = length($0)
       if (NF > 0) {
         numLeadingSpace = index($0, $1) - 1;
       }
 
+      # 如果前一行的长度小于前导空格数量，则报错退出
       if (length(lastline) < numLeadingSpace) {
         print "error:line has more leading whitespaces than the length of the previous line";
         exit 1;
       }
 
+      # 替换前导空格
       # Replace these leading spaces with the same amount of characters from the previous line.
       $0 = substr(lastline, 1, numLeadingSpace) substr($0, numLeadingSpace + 1);
     }
@@ -910,13 +931,16 @@ function run_awk_script_journalctl {
   fi
 }
 
+# 读取用户提供的搜索模式，比如 /INFO/
 user_pattern=$1
 
+# 处理检索 journalctl 的场景
 if [[ "$logfile_last" == "${SPECIAL_FILENAME_JOURNALCTL}" ]]; then
   echo "p:stage:$STAGE_QUERYING:querying logs:Note that journalctl can be SLOW. Consider using log files." 1>&2
 
   # For both $from and $to, convert the format
   # "2006-01-02-15:04" -> "2006-01-02 15:04:00"
+  # 基于 from + to 构建 journalctl 的时间范围，其会忽略秒
   journalctl_from=""
   if [[ "$from" != "" ]]; then
     journalctl_from="${from:0:10} ${from:11}:00"
@@ -940,12 +964,15 @@ if [[ "$logfile_last" == "${SPECIAL_FILENAME_JOURNALCTL}" ]]; then
   # files); and also when we're just getting the next page and not interested
   # in timeline histogram data for the full period, we just exit early after
   # accumulating $max_num_lines.
+  # 构建 journalctl 命令，journalctl --output=short-iso-precise --quite --reverse
   cmd="$journalctl_binary $JOURNALCTL_FORMAT_FLAG --quiet --reverse"
 
+  # 变为：journalctl --output=short-iso-precise --quite --reverse --since 2006-01-02 15:04:00
   if [[ -n "$journalctl_from" ]]; then
     cmd="$cmd --since \"$journalctl_from\""
   fi
 
+  # 变为：journalctl --output=short-iso-precise --quite --reverse --util 2006-01-02 15:04:00
   if [[ -n "$timestamp_until_seconds" ]]; then
     cmd="$cmd --until \"$timestamp_until_seconds\""
     stop_after_max_num_lines="1"
@@ -957,6 +984,7 @@ if [[ "$logfile_last" == "${SPECIAL_FILENAME_JOURNALCTL}" ]]; then
   echo "debug:Command to filter logs by time range:" 1>&2
   echo "debug: $cmd" 1>&2
 
+  # 构建 journalctl 命令，并将输出传递给下一个命令，在调用前设置环境变量
   eval "${cmd}" |                         \
     user_pattern="$user_pattern"     \
     max_num_lines="$max_num_lines"   \
@@ -982,9 +1010,11 @@ fi
 
 # A portable function to get file size.
 # Usage: get_file_size /path/to/file
+# 获取文件大小
 get_file_size() {
   case $os_kind in
     linux)
+      # stat -c %s /var/log/messages
       stat -c %s "$1"
       ;;
     macos|bsd)
@@ -998,9 +1028,11 @@ get_file_size() {
 
 # A portable function to get file modification time.
 # Usage: get_file_modtime /path/to/file
+# 获取文件最后编辑时间
 get_file_modtime() {
   case $os_kind in
     linux)
+      # stat -c %y /var/log/messages
       stat -c %y "$1"
       ;;
     macos|bsd)
@@ -1014,15 +1046,21 @@ get_file_modtime() {
   esac
 }
 
+# 读取前一个日志文件大小
 logfile_prev_size=$(get_file_size $logfile_prev) || exit 1
+# 读取当前日志文件大小
 logfile_last_size=$(get_file_size $logfile_last) || exit 1
+# 计算两个日志文件的总大小
 total_size=$((logfile_prev_size+logfile_last_size)) || exit 1
 
+# 如果 --refresh-index 被提供，则删除索引文件
 if [[ "$refresh_index" == "1" ]]; then
   rm -f $indexfile || exit 1
 fi
 
+# 重建索引文件
 function refresh_index { # {{{
+
   local last_linenr=0
   local last_bytenr=0
   local prevlog_bytes=$(get_prevlog_bytenr)
@@ -1079,6 +1117,7 @@ function refresh_index { # {{{
   # includes the year, microseconds, and timezone.
   awk_functions='
 function inferYear(logMonth, curYear, curMonth) {
+  # 计算月份差值，并对齐进行
   delta = logMonth - curMonth
 
   if (delta <= -11)       # log month is Jan, current is Dec -> next year
@@ -1131,15 +1170,21 @@ function printIndexLine(outfile, timestr, linenr, bytenr) {
   curHHMM = '"$awktime_hhmm"';
 }'
 
+  # 当存在索引文件时的处理
+  # 索引文件一行的格式：idx	2025-03-12-10:56	1053	69939
   if [ -s $indexfile ]
   then
     echo "p:stage:$STAGE_INDEX_APPEND:indexing up" 1>&2
 
+    # 读取索引文件最后一行，并提取第二个字段，为时间
     local lastTimestr="$(tail -n 1 $indexfile | cut -f2)"
+    # 读取索引文件最后一行，并提取第三个字段，为行号
     local last_linenr="$(tail -n 1 $indexfile | cut -f3)"
+    # 读取索引文件最后一行，并提取第四个字段，为字节数
     local last_bytenr="$(tail -n 1 $indexfile | cut -f4)"
     local size_to_index=$((total_size-last_bytenr))
 
+    # 基于上次读取的内容，从日志文件中继续读取，并应用awk脚本
     tail -c +$((last_bytenr-prevlog_bytes)) $logfile_last | "$awk_binary" -b "$awk_functions
   BEGIN {
     $awk_vars
@@ -1218,6 +1263,7 @@ function printIndexLine(outfile, timestr, linenr, bytenr) {
 #   read -r my_result my_linenr my_bytenr <<<$(get_linenr_and_bytenr_from_index my_timestr)
 #
 # Now we can use those vars $my_result, $my_linenr and $my_bytenr
+# 从索引文件中获取指定时间的行号和字节数
 function get_linenr_and_bytenr_from_index() { # {{{
   "$awk_binary" -F"\t" '
     BEGIN { isFirstIdx = 1; printed = 0; }
@@ -1246,28 +1292,34 @@ function get_linenr_and_bytenr_from_index() { # {{{
   ' $indexfile
 } # }}}
 
+# 从索引文件中读取前一个日志文件的行数
 function get_prevlog_lines_from_index() { # {{{
   if ! "$awk_binary" -F"\t" 'BEGIN { found=0 } $1 == "prevlog_lines" { print $2; found = 1; exit } END { if (found == 0) { exit 1 } }' $indexfile ; then
     return 1
   fi
 } # }}}
 
+# 读取前一个日志文件的修改时间
 function get_prevlog_modtime_from_index() { # {{{
   if ! "$awk_binary" -F"\t" 'BEGIN { found=0 } $1 == "prevlog_modtime" { print $2; found = 1; exit } END { if (found == 0) { exit 1 } }' $indexfile ; then
     return 1
   fi
 } # }}}
 
+# 读取前一个日志的字节数
 function get_prevlog_bytenr() { # {{{
   get_file_size $logfile_prev
 } # }}}
 
 is_outside_of_range=0
+# 处理指定了日期的场景
 if [[ "$from" != "" || "$to" != "" ]]; then
   # If indexfile exists, check if it's valid and relevant; if not, delete it.
+  # 索引文件存在时
   if [ -e "$indexfile" ]; then
     # Check timestamp in the first line of /tmp/nerdlog_agent_index, and if
     # $logfile_prev's modification time is newer, then delete whole index
+    # 检查索引文件中首行的时间戳，并且如果前一个日志文件的修改时间较新，则删除整个索引文件
     logfile_prev_stored_modtime="$(get_prevlog_modtime_from_index)"
     logfile_prev_cur_modtile=$(get_file_modtime $logfile_prev)
     if [[ "$logfile_prev_stored_modtime" != "$logfile_prev_cur_modtile" ]]; then
@@ -1275,6 +1327,7 @@ if [[ "$from" != "" || "$to" != "" ]]; then
       rm -f $indexfile || exit 1
     fi
 
+    # 如果从索引文件中读取前一个日志文件的行数失败，则认为索引文件已损坏，删除它
     if ! get_prevlog_lines_from_index > /dev/null; then
       echo "debug:broken index file (no prevlog lines), deleting it" 1>&2
       rm -f $indexfile || exit 1
@@ -1285,27 +1338,36 @@ if [[ "$from" != "" || "$to" != "" ]]; then
 
   # First try to find it in index without refreshing the index
 
+  # 索引文件可读
   if [ -s "$indexfile" ]; then
+    # 开始时间不为空
     if [[ "$from" != "" ]]; then
+        # 从索引文件中获取开始时间的行号和字节数
         read -r from_result from_linenr from_bytenr <<<$(get_linenr_and_bytenr_from_index "$from") || exit 1
+        # 开始时间未找到，则需要刷新索引文件
         if [[ "$from_result" != "found" ]]; then
           echo "debug:the from ${from} isn't found, gonna refresh the index" 1>&2
           refresh_and_retry=1
         fi
     fi
 
+    # 结束时间不为空
     if [[ "$to" != "" ]]; then
+      # 从索引文件中获取结束时间的行号和字节数
       read -r to_result to_linenr to_bytenr <<<$(get_linenr_and_bytenr_from_index "$to") || exit 1
+      # 结束时间未找到，则需要刷新索引文件
       if [[ "$to_result" != "found" ]]; then
         echo "debug:the to ${to} isn't found, gonna refresh the index" 1>&2
         refresh_and_retry=1
       fi
     fi
   else
+    # 索引文件不存在，或为空，则需要刷新重建
     echo "debug:index file doesn't exist or is empty, gonna refresh it" 1>&2
     refresh_and_retry=1
   fi
 
+  # 刷新索引文件并重试
   if [[ "$refresh_and_retry" == 1 ]]; then
     refresh_index || exit 1
 
@@ -1351,12 +1413,14 @@ if [[ "$from" != "" || "$to" != "" ]]; then
 
   fi
 else
+  # 重建索引文件
   if ! [ -s $indexfile ]; then
     echo "debug:neither --from or --to are given, but index doesn't exist at all, gonna rebuild" 1>&2
     refresh_index || exit 1
   fi
 fi
 
+# 如果指定的时间范围在日志范围之外，则直接退出
 if [[ $is_outside_of_range == 1 ]]; then
   echo "p:stage:$STAGE_DONE:done" 1>&2
   exit 0
@@ -1466,6 +1530,7 @@ echo "debug: bash -c '$cmds_concatenated'" 1>&2
 
 # Now execute all those commands, and feed those logs to the awk script
 # which will analyze them and produce the final output.
+# 执行所有的命令，然后将日志传递给 awk 脚本进行分析并生成最终输出
 eval $cmds_concatenated | \
   user_pattern="$user_pattern"                          \
   max_num_lines="$max_num_lines"                        \
