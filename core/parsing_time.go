@@ -99,6 +99,7 @@ type TimeFormatAWKExpr struct {
 }
 
 func GetTimeFormatDescrFromLogLines(logLines []string) (*TimeFormatDescr, error) {
+	// 没有任何日志可以解析
 	if len(logLines) == 0 {
 		return nil, errors.Errorf("no logs, can't detect time format")
 	}
@@ -106,6 +107,7 @@ func GetTimeFormatDescrFromLogLines(logLines []string) (*TimeFormatDescr, error)
 	descrs := make([]*TimeFormatDescr, 0, len(logLines))
 
 	for i, line := range logLines {
+		// 检测日期格式，支持众多的时间格式
 		layout := DetectTimeLayout(line)
 		if layout == "" {
 			return nil, errors.Errorf("unable to detect time format from %q", line)
@@ -136,6 +138,8 @@ func GetTimeFormatDescrFromLogLines(logLines []string) (*TimeFormatDescr, error)
 //
 // TODO: it's pretty simplistic and could be improved, even to avoid having
 // a predefined set of known formats, but good enough for now.
+
+// 使用预制的时间格式，对日志尝试解析
 func DetectTimeLayout(logLine string) string {
 	var knownFormats = []string{
 		"Jan _2 15:04:05",                  // Traditional rsyslog format without year
@@ -156,8 +160,11 @@ func DetectTimeLayout(logLine string) string {
 	}
 
 	for _, layout := range knownFormats {
+		// 从前五逐步向后解析
 		for curLen := 5; curLen <= len(layout) && curLen <= len(logLine); curLen++ {
+			// 提取前N位
 			sub := logLine[:curLen]
+			// 尝试解析
 			_, err := time.Parse(layout, sub)
 			if err == nil {
 				return layout

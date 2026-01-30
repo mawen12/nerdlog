@@ -75,32 +75,51 @@ var nerdlogAgentSh string
 var syslogRegex = regexp.MustCompile(`^(\S+)\s+(\S+?)(?:\[(\d+)\])?:\s+(.*)`)
 
 type LStreamClient struct {
+	// 启动该 logstream client的参数，其中还有用于通知上游的通道
 	params LStreamClientParams
 
+	// logstream client 底层负责通信的 transport，仅负责连接，实际的连接信息包存在 conn
 	transport ShellTransport
 
+	// 在对 transport 调用 doConnect 阶段过程中用于接收连接信息和结果的channel
 	connectUpdCh chan ShellConnUpdate
 	enqueueCmdCh chan lstreamCmd
 
 	// timezone is a string received from the logstream
+	// 从 Connecting => ConnectedIdle 阶段后，执行的 bootstrap 命令，从bash nerdlog_agent.sh logstream-info 读取的timeZone
 	timezone string
 	// location is loaded based on the timezone. If failed, it'll be UTC.
+	// 根据上面的timeZone解析得出的location
 	location *time.Location
 
 	// exampleLogLines are the lines that we received during logstream bootstrap.
 	// We'll try to do log format autodetection based on that.
+	// 从 Connecting => ConnectedIdle 阶段后，执行的 bootstrap 命令，从bash nerdlog_agent.sh logstream-info 读取的 example_log_line的数据
 	exampleLogLines []string
-	timeFormat      *TimeFormatDescr
 
+	// 基于获取到的日志，使用内置的日期格式进行解析得出的格式
+	timeFormat *TimeFormatDescr
+
+	// 在Connecting => Disconnected 的失败次数统计，当连接成功后，便会重置
 	numConnAttempts int
 
-	state     LStreamClientState
+	// logstream client 的当前连接状态
+	// Disconnected 刚初始化的状态，或者之前连接断开了
+	// Connecting 连接中，一般是刚启动/触发了连接重试
+	// ConnectedIdle
+	state LStreamClientState
+
 	busyStage BusyStage
 
+	// 保存了底层transport的连接和输入、输出、错误输出的细节
+	// 当位于 Disconnected 时，值为null
+	// 当位于 Connecting 时，值为 null，当连接成功时，便会赋值
+	// 当位于 ConnectedIdle / ConnectedBusy 时，值非空
 	conn *connCtx
 
 	// connDebugMessages contains human-readable messages received from the shell
 	// transport regarding the connection.
+	// 在底层transport连接过程中，通过connectUpdCh拿到的信息
 	connDebugMessages []string
 
 	// 在底层的transport连接成功后，开始执行其中的首个命令
@@ -399,7 +418,7 @@ func (lsc *LStreamClient) changeState(newState LStreamClientState) {
 	oldState := lsc.state
 
 	// Properly leave old state
-	// 从 Connected => !Connected，需要关闭连接
+	// 从 ConnectedIdle/ConnectedBusy => !Connected，需要关闭连接
 	if isStateConnected(oldState) && !isStateConnected(newState) {
 		// Initiate disconnect
 		// 关闭transport的connection
@@ -411,6 +430,7 @@ func (lsc *LStreamClient) changeState(newState LStreamClientState) {
 	// 以前是连接中时，会监听底层的transport连接进度而使用的通道，变更状态后，需要置空
 	case LStreamClientStateConnecting:
 		lsc.connectUpdCh = nil
+	// 以前是命令执行中，此时需要清除执行的命令
 	case LStreamClientStateConnectedBusy:
 		lsc.curCmdCtx = nil
 		lsc.busyStage = BusyStage{}
@@ -467,6 +487,7 @@ func (lsc *LStreamClient) makeConnDetailsMsg(err string) *ConnDetails {
 	}
 }
 
+// 通知上游 ConnectedBusy 的进度
 func (lsc *LStreamClient) sendBusyStageUpdate() {
 	upd := lsc.busyStage
 	lsc.sendUpdate(&LStreamClientUpdate{
@@ -475,14 +496,17 @@ func (lsc *LStreamClient) sendBusyStageUpdate() {
 }
 
 func (lsc *LStreamClient) sendCmdResp(resp interface{}, err error) {
+	// 当前的cmd上下文为空，则跳过
 	if lsc.curCmdCtx == nil {
 		return
 	}
 
+	// 当前的cmd上下文的响应为空，则跳过
 	if lsc.curCmdCtx.cmd.respCh == nil {
 		return
 	}
 
+	// 将信息写入通道
 	lsc.curCmdCtx.cmd.respCh <- lstreamCmdRes{
 		hostname: lsc.params.LogStream.Name,
 		resp:     resp,
@@ -567,7 +591,7 @@ func (lsc *LStreamClient) run() {
 				lsc.changeState(LStreamClientStateConnectedIdle)
 
 				// Send bootstrap command
-				// 开始执行 bootstrap 命令
+				// 开始执行 bootstrap 命令，负责将nerdlog_agent.sh脚本上传到目标服务器，然后执行logstream-info的命令
 				lsc.startCmd(lstreamCmd{
 					bootstrap: &lstreamCmdBootstrap{},
 				})
@@ -575,6 +599,7 @@ func (lsc *LStreamClient) run() {
 
 		case cmd := <-lsc.enqueueCmdCh:
 			// Require a connection.
+			// 检查连接状态
 			if !isStateConnected(lsc.state) {
 				lsc.sendCmdResp(nil, errors.Errorf("not connected"))
 				continue
@@ -582,13 +607,16 @@ func (lsc *LStreamClient) run() {
 
 			// And then, depending on whether we're busy or idle, either act
 			// right away, or enqueue for later.
+			// 对于ConnectedIdle状态的，可以直接触发执行
 			if lsc.state == LStreamClientStateConnectedIdle {
 				lsc.startCmd(cmd)
 			} else {
+				// 对于 ConnectedBusy 状态，需要加入等待队列
 				lsc.addCmdToQueue(cmd)
 			}
-
+		// 处理从transport的输出读取到内容的场景
 		case line, ok := <-lsc.conn.getStdoutLinesCh():
+			// 处理失败的场景，比如 transport 的 stdout已经关闭了
 			if !ok {
 				// Stdout was just closed
 				lsc.params.Logger.Verbose3f("Stdout was closed (%s)", lsc.params.LogStream.Name)
@@ -600,30 +628,38 @@ func (lsc *LStreamClient) run() {
 
 			lsc.params.Logger.Verbose3f("Got stdout line(%s): %s", lsc.params.LogStream.Name, line)
 
+			// 同步最后更新时间
 			lastUpdTime = lsc.params.Clock.Now()
 
 			switch lsc.state {
+			// 仅当客户端在处于 ConnectedBusy 状态才做处理
 			case LStreamClientStateConnectedBusy:
 				cmdCtx := lsc.curCmdCtx
 
+				// 读取当前执行的命令为空，说明此时还没有执行
 				if cmdCtx == nil {
 					// We received some line before printing any command, must be
 					// just standard welcome message, but we're not interested in that.
+					// 在打印任何命令之前，收到了一些信息，但是这是标准的环境信息，对此可以忽略
 					continue
 				}
 
+				// 处理所有命令最后的 command_done:xx 的场景
 				if lsc.checkCommandDone(line, cmdCtx, false) {
 					continue
 				}
 
+				// 处理 bootstrap 开头的 reset_output 场景
 				if lsc.checkResetOutput(line, cmdCtx, false) {
 					continue
 				}
 
+				// 处理nerdlog_agent.sh 执行出现 error: 场景
 				if lsc.checkError(line, cmdCtx) {
 					continue
 				}
 
+				// 处理bootstrap和query命令最后的 echo exit_code:$? 的场景
 				if lsc.checkExitCode(line, cmdCtx) {
 					continue
 				}
@@ -633,10 +669,11 @@ func (lsc *LStreamClient) run() {
 					tzPrefix := "host_timezone:"
 					logLinePrefix := "example_log_line:"
 
-					if strings.HasPrefix(line, tzPrefix) {
+					if strings.HasPrefix(line, tzPrefix) { // 处理bash nerdlog_agent.sh logstream-info 中的 echo host_timezone:xxx的结果
 						tz := strings.TrimPrefix(line, tzPrefix)
 						lsc.params.Logger.Verbose1f("Got logstream timezone: %s\n", tz)
 
+						// 解析 location
 						location, err := time.LoadLocation(tz)
 						if err != nil {
 							lsc.params.Logger.Errorf("Error: failed to load location %s, will use UTC\n", tz)
@@ -646,88 +683,103 @@ func (lsc *LStreamClient) run() {
 							lsc.timezone = tz
 							lsc.location = location
 						}
-					} else if strings.HasPrefix(line, logLinePrefix) {
+					} else if strings.HasPrefix(line, logLinePrefix) { // 处理bash nerdlog_agent.sh logstream-info 中的 echo example_log_line:xxx的结果
 						exampleLogLine := strings.TrimPrefix(line, logLinePrefix)
 						lsc.params.Logger.Verbose1f("Got example log line: %s\n", exampleLogLine)
 
 						lsc.exampleLogLines = append(lsc.exampleLogLines, exampleLogLine)
-					} else if line == "bootstrap ok" {
+					} else if line == "bootstrap ok" { // 处理 bootstrap 执行成功的场景
 						cmdCtx.bootstrapCtx.receivedSuccess = true
-					} else if line == "bootstrap failed" {
+					} else if line == "bootstrap failed" { // bootstrap 执行失败的场景
 						cmdCtx.bootstrapCtx.receivedFailure = true
-					} else {
+					} else { // 其他情况无需处理
 						cmdCtx.unhandledStdout = append(cmdCtx.unhandledStdout, line)
 					}
 
 				case cmdCtx.cmd.ping != nil:
 					// Nothing special to do
+					// ping 命令的结果无需处理
 					cmdCtx.unhandledStdout = append(cmdCtx.unhandledStdout, line)
 
-				case cmdCtx.cmd.queryLogs != nil:
+				case cmdCtx.cmd.queryLogs != nil: // queryLogs 场景
 					respCtx := cmdCtx.queryLogsCtx
 					resp := respCtx.Resp
 
 					switch {
-					case strings.HasPrefix(line, "s:"):
+					case strings.HasPrefix(line, "s:"): // 返回分钟级的消息记录数
+						// s: xx , xx
 						parts := strings.Split(strings.TrimPrefix(line, "s:"), ",")
 						if len(parts) < 2 {
 							err := errors.Errorf("malformed mstats %q: expected at least 2 parts", line)
 							cmdCtx.errs = append(cmdCtx.errs, err)
 							continue
 						}
-
+						// 根据minuteKey解析时间
 						t, err := time.ParseInLocation(lsc.timeFormat.MinuteKeyLayout, parts[0], lsc.location)
 						if err != nil {
 							cmdCtx.errs = append(cmdCtx.errs, errors.Annotatef(err, "parsing mstats"))
 							continue
 						}
 
+						// 推断年份
 						t = InferYear(lsc.params.Clock.Now(), t)
 						t = t.UTC()
 
+						// 转换为数量
 						n, err := strconv.Atoi(parts[1])
 						if err != nil {
 							cmdCtx.errs = append(cmdCtx.errs, errors.Annotatef(err, "parsing mstats"))
 							continue
 						}
 
+						// 加入统计
 						resp.MinuteStats[t.Unix()] = MinuteStatsItem{
 							NumMsgs: n,
 						}
 
-					case strings.HasPrefix(line, "logfile:"):
+					case strings.HasPrefix(line, "logfile:"): //logfile:xx
+						// logfile:/var/log/messages.1:0
+						// logfile:/var/log/messages.1:xxx
 						msg := strings.TrimPrefix(line, "logfile:")
-						idx := strings.IndexRune(msg, ':')
+						idx := strings.IndexRune(msg, ':') // 提取:的位置
 						if idx <= 0 {
 							cmdCtx.errs = append(cmdCtx.errs, errors.Errorf("parsing logfile msg: no number of lines %q", line))
 							continue
 						}
 
+						// 获取文件名称
 						logFilename := msg[:idx]
+						// 获取该文件的总行数
 						logNumberOfLinesStr := msg[idx+1:]
+						// 总行数转换为数字
 						logNumberOfLines, err := strconv.Atoi(logNumberOfLinesStr)
 						if err != nil {
 							cmdCtx.errs = append(cmdCtx.errs, errors.Annotatef(err, "parsing logfile msg: invalid number in %q", line))
 							continue
 						}
 
+						// 将日志文件追加到logstream的响应中
 						respCtx.logfiles = append(respCtx.logfiles, logfileWithStartingLinenumber{
 							filename:       logFilename,
 							fromLinenumber: logNumberOfLines,
 						})
 
-					case strings.HasPrefix(line, "m:"):
-						// msg:Mar 26 17:08:34 localhost myapp[21134]: Mar 26 17:08:34.476329 foo bar foo bar
+					case strings.HasPrefix(line, "m:"): // 返回符合的消息内容
+						// m:1234: Mar 26 17:08:34.476329 foo bar foo bar
 						msg := strings.TrimPrefix(line, "m:")
+						// 获取第二个:的索引
 						idx := strings.IndexRune(msg, ':')
 						if idx <= 0 {
 							cmdCtx.errs = append(cmdCtx.errs, errors.Errorf("parsing log msg: no line number in %q", line))
 							continue
 						}
 
+						// 获取机器信息，1234
 						logLinenoStr := msg[:idx]
+						// 获取消息内容，Mar 26 17:08:34.476329 foo bar foo bar
 						msg = msg[idx+1:]
 
+						// 将行号转换为数字
 						logLinenoCombined, err := strconv.Atoi(logLinenoStr)
 						if err != nil {
 							cmdCtx.errs = append(cmdCtx.errs, errors.Annotatef(err, "parsing log msg: invalid line number in %q", line))
@@ -749,9 +801,9 @@ func (lsc *LStreamClient) run() {
 						// Put together a basic LogMsg, for now with the raw message and
 						// without even the Time parsed, and then give it to parseLine,
 						// which will encirch it.
+						// 构造日志消息
 						logMsg := LogMsg{
 							// Time will be set later
-
 							LogFilename:   logFilename,
 							LogLinenumber: logLineno,
 
@@ -765,6 +817,7 @@ func (lsc *LStreamClient) run() {
 							OrigLine: msg,
 						}
 
+						// 解析日志消息中的时间戳，日志级别，syslog格式
 						err = lsc.parseLine(&logMsg)
 						if err != nil {
 							cmdCtx.errs = append(cmdCtx.errs, errors.Annotatef(err, "parsing log msg %q", line))
@@ -796,7 +849,9 @@ func (lsc *LStreamClient) run() {
 				}
 			}
 
+		// 错误输出
 		case line, ok := <-lsc.conn.getStderrLinesCh():
+			// stderr 已经关闭
 			if !ok {
 				// Stderr was just closed
 				lsc.params.Logger.Verbose3f("Stderr was closed (%s)", lsc.params.LogStream.Name)
@@ -815,6 +870,7 @@ func (lsc *LStreamClient) run() {
 			// them all at once), but for the process info, we actually want it right
 			// when it's printed by the nerdlog_agent.sh.
 			switch lsc.state {
+			// 正在执行指令
 			case LStreamClientStateConnectedBusy:
 				cmdCtx := lsc.curCmdCtx
 
@@ -823,69 +879,88 @@ func (lsc *LStreamClient) run() {
 					continue
 				}
 
+				// 检查 command_done
 				if lsc.checkCommandDone(line, cmdCtx, true) {
 					continue
 				}
 
+				// 检查 reset_output
 				if lsc.checkResetOutput(line, cmdCtx, true) {
 					continue
 				}
 
+				// 检查 error:
 				if lsc.checkError(line, cmdCtx) {
 					continue
 				}
 
 				switch {
+				// 处理 bootstrap 异常
 				case cmdCtx.cmd.bootstrap != nil:
+					// 处理 journalctl 没有 admin 的警告
 					if line == "warn_journalctl_no_admin_access" {
 						cmdCtx.bootstrapCtx.warnJournalctlNoAdminAccess = true
 					} else {
+						// 追加异常信息，此处为无需处理的异常
 						cmdCtx.unhandledStderr = append(cmdCtx.unhandledStderr, line)
 					}
+				// 处理 ping 异常
 				case cmdCtx.cmd.ping != nil:
+					// 忽略异常
 					cmdCtx.unhandledStderr = append(cmdCtx.unhandledStderr, line)
+				// 处理 queryLogs 异常
 				case cmdCtx.cmd.queryLogs != nil:
 					switch {
-					case strings.HasPrefix(line, "p:"):
+					case strings.HasPrefix(line, "p:"): // 这是处理进度状态
 						// "p:" means process
 						processLine := strings.TrimPrefix(line, "p:")
 
 						switch {
+						// 处理进度
 						case strings.HasPrefix(processLine, "stage:"):
+							// p:stage:2:done
 							stageLine := strings.TrimPrefix(processLine, "stage:")
+							// 拆分，结果为：[2, done]
 							parts := strings.Split(stageLine, ":")
 							if len(parts) < 2 {
 								cmdCtx.errs = append(cmdCtx.errs, errors.Errorf("received malformed p:stage line: %s (expected at least 2 parts, got %d)", line, len(parts)))
 								continue
 							}
 
+							// 进度数字
 							num, err := strconv.Atoi(parts[0])
 							if err != nil {
 								cmdCtx.errs = append(cmdCtx.errs, errors.Annotatef(err, "received malformed p:stage line: %s", line))
 								continue
 							}
 
+							// 同步到 busyStage
 							lsc.busyStage = BusyStage{
 								Num:   num,
 								Title: parts[1],
 							}
 
+							// 填充额外信息
 							if len(parts) >= 3 {
 								lsc.busyStage.ExtraInfo = parts[2]
 							}
 
+							// 通知上游
 							lsc.sendBusyStageUpdate()
-
+						// 处理进展百分比
 						case strings.HasPrefix(processLine, "p:"):
 							// second "p:" means percentage
-
+							// p:p:50
+							// 获取进度
 							percentage, err := strconv.Atoi(strings.TrimPrefix(processLine, "p:"))
 							if err != nil {
 								cmdCtx.errs = append(cmdCtx.errs, errors.Annotatef(err, "received malformed p:p line: %s", line))
 								continue
 							}
 
+							// 更新进展
 							lsc.busyStage.Percentage = percentage
+							// 通知上游
 							lsc.sendBusyStageUpdate()
 						default:
 							cmdCtx.unhandledStderr = append(cmdCtx.unhandledStderr, line)
@@ -1059,6 +1134,7 @@ func getScannerFunc(name string, reader io.Reader, linesCh chan<- string) func()
 	}
 }
 
+// 将要执行的命令塞入队列，并且在 ConnectedIdle 时取出执行
 func (lsc *LStreamClient) EnqueueCmd(cmd lstreamCmd) {
 	lsc.enqueueCmdCh <- cmd
 }
@@ -1108,7 +1184,7 @@ func (lsc *LStreamClient) startCmd(cmd lstreamCmd) {
 	lsc.nextCmdIdx++
 
 	switch {
-	// 启动，在Connecting => ConnectedIdle 后，开始执行的命令
+	// 启动，在Connecting => ConnectedIdle 后，开始执行的命令，负责上传脚本，并对脚本执行 logstream-info 命令
 	case cmdCtx.cmd.bootstrap != nil:
 		lsc.params.Logger.Verbose3f("Starting command: bootstrap %+v", cmdCtx.cmd.bootstrap)
 		// 设置boostrap标志位
@@ -1136,12 +1212,16 @@ func (lsc *LStreamClient) startCmd(cmd lstreamCmd) {
 			stdinBuf.Write([]byte("\n"))
 		}
 
-		// 开始写入 nerdlog_agent.sh 的脚本内容到/tmp目录下，完成命令为：
+		// 开始写入 nerdlog_agent.sh 的脚本内容到/tmp目录下，完整命令为：
 		// ( cat <<- 'EOF' > /tmp/nerdlog_agent_<clientId>_<filepathId>.sh
 		// 	<nerdlogAgentSh content>
-		// EOF
-		// if [ $? -ne 0]; then echo 'bootstrap failed'; exit 1; fi
+		// 	EOF
+		// 	sudo -n bash /tmp/nerdlog_agent_<clientId>_<filepathId>.sh logstream-info --logfile-last <logstream-last> --logfile-prev <logstream-prev>
+		// 	if [ $? -ne 0 ]; then echo 'bootstrap failed'; exit 1; fi
+		// 	echo 'bootstrap ok'
 		// )
+		// echo exit_code:$?
+		//
 		stdinBuf.Write([]byte("("))
 
 		stdinBuf.Write([]byte("  cat <<- 'EOF' > " + lsc.getLStreamNerdlogAgentPath() + "\n" + nerdlogAgentSh + "EOF\n"))
@@ -1151,10 +1231,12 @@ func (lsc *LStreamClient) startCmd(cmd lstreamCmd) {
 		var parts []string
 
 		// If requested, run the whole thing with "sudo -n".
+		// 是否追加 sudo -n
 		if lsc.params.LogStream.Options.SudoMode == SudoModeFull {
 			parts = append(parts, "sudo", "-n")
 		}
 
+		// 添加环境变量
 		parts = append(parts, lsc.getTimeEnvVars()...)
 
 		parts = append(
@@ -1175,7 +1257,7 @@ func (lsc *LStreamClient) startCmd(cmd lstreamCmd) {
 		stdinBuf.Write([]byte(")\n"))
 		stdinBuf.Write([]byte("echo exit_code:$?\n"))
 
-	// ping 命令
+	// ping 命令，在 ConnectedIdle 且距离上次间隔40s以上，具体为 whoami echo exit_code:$?，该命令执行不依赖脚本
 	case cmdCtx.cmd.ping != nil:
 		lsc.params.Logger.Verbose3f("Starting command: ping %+v", cmdCtx.cmd.ping)
 		cmdCtx.pingCtx = &lstreamCmdCtxPing{}
@@ -1184,7 +1266,7 @@ func (lsc *LStreamClient) startCmd(cmd lstreamCmd) {
 		stdinBuf := lsc.conn.conn.Stdin()
 		stdinBuf.Write([]byte(cmd))
 		stdinBuf.Write([]byte("echo exit_code:$?\n"))
-	// queryLogs 命令
+	// queryLogs 命令，在 ConnectedIdle，执行依赖nerdlog_agent.sh
 	case cmdCtx.cmd.queryLogs != nil:
 		lsc.params.Logger.Verbose3f("Starting command: queryLogs %+v", cmdCtx.cmd.queryLogs)
 		cmdCtx.queryLogsCtx = &lstreamCmdCtxQueryLogs{
@@ -1194,18 +1276,25 @@ func (lsc *LStreamClient) startCmd(cmd lstreamCmd) {
 		}
 
 		var parts []string
-
+		// 使用 gzip，echo gzip_start ;
 		if useGzip {
 			parts = append(parts, "echo", gzipStartMarker, ";")
 		}
 
 		// If requested, run the whole thing with "sudo -n".
+		// 需要 sudo， sudo -n
 		if lsc.params.LogStream.Options.SudoMode == SudoModeFull {
 			parts = append(parts, "sudo", "-n")
 		}
 
+		// 追加环境变量
 		parts = append(parts, lsc.getTimeEnvVars()...)
 
+		// 完整命令为：echo gzip_start ; sudo -n bash /tmp/nerdlog_agent_<clientId>_<filepathId>.sh \
+		//  query --index-file  --max-num-lines --logfile-last --logfile-prev --from --to --lines-until \
+		//  --timestamp-util-seconds --timestamp-util-precise --skip-n-latest --refresh-index  \
+		//  --awktime-month --awktime-year --awktime-day --awktime-hhmm --awktime-monute-key
+		//  <pattern> | gzip ; echo gzip_end
 		parts = append(
 			parts,
 			"bash", shellQuote(lsc.getLStreamNerdlogAgentPath()),
@@ -1253,8 +1342,10 @@ func (lsc *LStreamClient) startCmd(cmd lstreamCmd) {
 			parts = append(parts, "--refresh-index")
 		}
 
+		// awk time
 		parts = append(parts, agentQueryTimeFormatArgs(&lsc.timeFormat.AWKExpr)...)
 
+		// awk pattern
 		if cmdCtx.cmd.queryLogs.query != "" {
 			parts = append(parts, shellQuote(cmdCtx.cmd.queryLogs.query))
 		}
@@ -1281,9 +1372,11 @@ func (lsc *LStreamClient) startCmd(cmd lstreamCmd) {
 	}
 
 	stdinBuf := lsc.conn.conn.Stdin()
+	// 执行 echo 'command_done:<idx>'
 	stdinBuf.Write([]byte(fmt.Sprintf("echo 'command_done:%d'\n", cmdCtx.idx)))
+	// 执行 echo 'command_done:<idx> 1>&2'
 	stdinBuf.Write([]byte(fmt.Sprintf("echo 'command_done:%d' 1>&2\n", cmdCtx.idx)))
-
+	// 从 ConnectedIdle => ConnectedBusy
 	lsc.changeState(LStreamClientStateConnectedBusy)
 }
 
@@ -1339,9 +1432,11 @@ func filepathToId(p string) string {
 }
 
 func (lsc *LStreamClient) checkIfDisconnected() {
+	// 当 stderr 和 stdout 均关闭之后，便可以关闭连接了
 	if lsc.conn.stderrLinesCh == nil && lsc.conn.stdoutLinesCh == nil {
 		// We're fully disconnected
 		lsc.params.Logger.Verbose3f("Fully disconnected")
+		// 关闭连接
 		lsc.changeState(LStreamClientStateDisconnected)
 
 		if lsc.tearingDown {
@@ -1352,32 +1447,33 @@ func (lsc *LStreamClient) checkIfDisconnected() {
 	}
 }
 
-func (lsc *LStreamClient) checkCommandDone(
-	line string, cmdCtx *lstreamCmdCtx, isStderr bool,
-) bool {
+// 处理 command_done: 的场景，这是在执行 startCmd 中的 bootstrap / ping / querlogs 最后输出的信息
+func (lsc *LStreamClient) checkCommandDone(line string, cmdCtx *lstreamCmdCtx, isStderr bool) bool {
 	if !strings.HasPrefix(line, "command_done:") {
 		return false
 	}
 
+	// 解析 command_done:xx 内容
 	_, err := parseCommandDoneLine(line, cmdCtx.idx)
 	if err != nil {
 		lsc.params.Logger.Errorf("Got malformed command_done line: %s (%s)", line, err.Error())
 		return true
 	}
 
+	// 用于标识错误是从stderr还是stdout来的
 	if isStderr {
 		cmdCtx.stderrDone = true
 	} else {
 		cmdCtx.stdoutDone = true
 	}
 
+	//
 	lsc.handleCommandResultsIfDone(cmdCtx)
 	return true
 }
 
-func (lsc *LStreamClient) checkError(
-	line string, cmdCtx *lstreamCmdCtx,
-) bool {
+// 处理脚本执行出现中出现 error: 的场景
+func (lsc *LStreamClient) checkError(line string, cmdCtx *lstreamCmdCtx) bool {
 	if !strings.HasPrefix(line, "error:") {
 		return false
 	}
@@ -1385,27 +1481,28 @@ func (lsc *LStreamClient) checkError(
 	// The agent script printed an error; it means that the whole execution will
 	// be considered failed once it's done. For now we just add the error to the
 	// resulting response.
+	// 解析错误信息
 	errMsg := strings.TrimPrefix(line, "error:")
+	// 追加到 cmd 上下文中
 	cmdCtx.errs = append(cmdCtx.errs, errors.New(errMsg))
 
 	return true
 }
 
-func (lsc *LStreamClient) checkExitCode(
-	line string, cmdCtx *lstreamCmdCtx,
-) bool {
+// 处理在执行 ping / bootstrap 命令最后输出 exit_code
+func (lsc *LStreamClient) checkExitCode(line string, cmdCtx *lstreamCmdCtx) bool {
 	if !strings.HasPrefix(line, "exit_code:") {
 		return false
 	}
 
+	// 保存 exitCode
 	cmdCtx.exitCode = strings.TrimPrefix(line, "exit_code:")
 	lsc.params.Logger.Verbose1f("Received exit code: %q", cmdCtx.exitCode)
 	return true
 }
 
-func (lsc *LStreamClient) checkResetOutput(
-	line string, cmdCtx *lstreamCmdCtx, isStderr bool,
-) bool {
+// 处理 bootstrap 命令的开始的 echo 'reset_output'
+func (lsc *LStreamClient) checkResetOutput(line string, cmdCtx *lstreamCmdCtx, isStderr bool) bool {
 	if line != "reset_output" {
 		return false
 	}
@@ -1422,6 +1519,7 @@ func (lsc *LStreamClient) checkResetOutput(
 // handleCommandResultsIfDone should be called whenever the previously ran
 // command is done.
 func (lsc *LStreamClient) handleCommandResultsIfDone(cmdCtx *lstreamCmdCtx) {
+	// 必须是来源于 stdout / stderr 才会被认可
 	if !cmdCtx.stdoutDone || !cmdCtx.stderrDone {
 		return
 	}
@@ -1429,12 +1527,16 @@ func (lsc *LStreamClient) handleCommandResultsIfDone(cmdCtx *lstreamCmdCtx) {
 	// Command is done.
 
 	switch {
+	// 处理刚从Connecting=>ConnectedIdle发出的bootstrap命令
 	case cmdCtx.cmd.bootstrap != nil:
+		// 检查 bootstrap 脚本已经执行成功了
 		if cmdCtx.bootstrapCtx.receivedSuccess && len(cmdCtx.errs) == 0 {
 			// Bootstrap script has ran successfully.
 
 			// If journalctl is used and we don't have access to all the system
 			// logs, send a warning update.
+
+			// 如果使用了 journalctl，且收到了没有权限访问日志的错误，则向上游发送警告信息
 			if cmdCtx.bootstrapCtx.warnJournalctlNoAdminAccess {
 				lsc.sendUpdate(&LStreamClientUpdate{
 					BootstrapDetails: &BootstrapDetails{
@@ -1444,6 +1546,7 @@ func (lsc *LStreamClient) handleCommandResultsIfDone(cmdCtx *lstreamCmdCtx) {
 			}
 
 			// Let's now try to autodetect the envelope log format.
+			// 检查自动检测日志格式
 			timeFormat, err := GetTimeFormatDescrFromLogLines(lsc.exampleLogLines)
 			if err != nil {
 				cmdCtx.errs = append(cmdCtx.errs, err)
@@ -1454,7 +1557,9 @@ func (lsc *LStreamClient) handleCommandResultsIfDone(cmdCtx *lstreamCmdCtx) {
 					len(lsc.exampleLogLines),
 					timeFormat.TimestampLayout,
 				)
+				// 保存到当前的 logstream 中
 				lsc.timeFormat = timeFormat
+				// 解析完成，ConnectedBusy => ConnectedIdle
 				lsc.changeState(LStreamClientStateConnectedIdle)
 				return
 			}
@@ -1462,6 +1567,7 @@ func (lsc *LStreamClient) handleCommandResultsIfDone(cmdCtx *lstreamCmdCtx) {
 
 		// There was an issue with bootstrapping.
 
+		// 处理 bootstrap 启动失败的场景
 		err := summaryCmdError(cmdCtx)
 		// If error is nil (which means, there were no "error:" printed, and
 		// bootstrap exited with 0 code, but since there was also no "bootstrap
@@ -1475,18 +1581,23 @@ func (lsc *LStreamClient) handleCommandResultsIfDone(cmdCtx *lstreamCmdCtx) {
 			)
 		}
 
+		// 通知上游bootstrap阶段报错
 		lsc.sendUpdate(&LStreamClientUpdate{
 			BootstrapDetails: &BootstrapDetails{
 				Err: err.Error(),
 			},
 		})
 
+		// 解析完成，ConnectedBusy => Disconnected
 		lsc.changeState(LStreamClientStateDisconnected)
 
+	// 处理ConnectedIdle状态发出的ping
 	case cmdCtx.cmd.ping != nil:
+		//
 		lsc.sendCmdResp(nil, nil)
 		lsc.changeState(LStreamClientStateConnectedIdle)
 
+	// 处理ConnectedIdle状态发出的queryLogs
 	case cmdCtx.cmd.queryLogs != nil:
 		resp := cmdCtx.queryLogsCtx.Resp
 		resp.DebugInfo.AgentStdout = cmdCtx.unhandledStdout
@@ -1562,18 +1673,22 @@ type parseLineResult struct {
 	ctxMap map[string]string
 }
 
+// 解析日志消息
 func (lsc *LStreamClient) parseLine(logMsg *LogMsg) error {
+	// 解析时间戳
 	if err := lsc.parseLogMsgTimestamp(logMsg); err != nil {
 		return errors.Annotatef(err, "parsing time")
 	}
 
 	// TODO: offload envelope parsing to Lua (and make it usable from
 	// the user Lua scripts as well).
+	// 尝试通过 syslog 解析
 	if err := lsc.parseLogMsgEnvelopeDefault(logMsg); err != nil {
 		return errors.Annotatef(err, "parsing envelope")
 	}
 
 	// TODO: offload the custom parsing to Lua
+	// 解析日志级别
 	if err := lsc.parseLogMsgLevelDefault(logMsg); err != nil {
 		return errors.Annotatef(err, "custom parsing")
 	}
@@ -1583,6 +1698,7 @@ func (lsc *LStreamClient) parseLine(logMsg *LogMsg) error {
 	return nil
 }
 
+// 尝试解析消息的时间戳
 func (lsc *LStreamClient) parseLogMsgTimestamp(logMsg *LogMsg) error {
 	msg := logMsg.Msg
 
@@ -1654,6 +1770,7 @@ func (lsc *LStreamClient) parseLogMsgTimestamp(logMsg *LogMsg) error {
 //
 // If the Msg doesn't have this structure, parseLogMsgEnvelopeDefault is a
 // no-op.
+// 尝试使用 syslogRegex 格式进行解析，并将解析出的 hostname, program, pid, rest 保存到上下文中
 func (lsc *LStreamClient) parseLogMsgEnvelopeDefault(logMsg *LogMsg) error {
 	matches := syslogRegex.FindStringSubmatch(logMsg.Msg)
 	if len(matches) == 0 {
@@ -1679,9 +1796,11 @@ func (lsc *LStreamClient) parseLogMsgEnvelopeDefault(logMsg *LogMsg) error {
 // parseLogMsgLevelDefault tries to guess what the level of the message could
 // be, based on commonly used patterns in the message like "error", "info",
 // "[E]", "[I]" etc.
+// 从日志中解析日志级别，并设置回去
 func (lsc *LStreamClient) parseLogMsgLevelDefault(logMsg *LogMsg) error {
 	msg := strings.ToLower(logMsg.Msg)
 
+	// 尝试通过 [f]/[e]/[w]/[i]/[d]解析
 	switch {
 	case strings.Contains(msg, "[f]"):
 		logMsg.Level = LogLevelError
@@ -1702,6 +1821,7 @@ func (lsc *LStreamClient) parseLogMsgLevelDefault(logMsg *LogMsg) error {
 	}
 
 	// Regex patterns for whole words or bracketed levels
+	// 尝试通过 /error/err/fatal/warn/warning/info/debu/debug 解析
 	patterns := []struct {
 		regex *regexp.Regexp
 		level LogLevel
@@ -1785,21 +1905,27 @@ type commandDoneDetails struct {
 	idx int
 }
 
+// 解析发送 startCmd 中返回的结果，并和本地进行匹配
 func parseCommandDoneLine(line string, expectedIdx int) (*commandDoneDetails, error) {
+	// 按照:分隔内容
 	parts := strings.Split(line, ":")
+	// 标准规范只有两部分
 	if len(parts) != 2 {
 		return nil, errors.Errorf("expected two parts, got %d", len(parts))
 	}
 
+	// 提取第二部分的数字信息
 	rxIdx, err := strconv.Atoi(parts[1])
 	if err != nil {
 		return nil, errors.Annotatef(err, "parsing idx as integer")
 	}
 
+	// 远程与本地的值不一致，报错
 	if rxIdx != expectedIdx {
 		return nil, errors.Errorf("received unexpected index with command_done: waiting for %d, got %d", expectedIdx, rxIdx)
 	}
 
+	// 返回解析结果
 	return &commandDoneDetails{
 		idx: rxIdx,
 	}, nil

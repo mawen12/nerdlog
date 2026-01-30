@@ -16,11 +16,13 @@ type lstreamCmd struct {
 }
 
 type lstreamCmdCtx struct {
+	// 命令
 	cmd lstreamCmd
-
+	// 索引
 	idx int
-
+	// 保存了 bootstrap 的上下文信息
 	bootstrapCtx *lstreamCmdCtxBootstrap
+
 	pingCtx      *lstreamCmdCtxPing
 	queryLogsCtx *lstreamCmdCtxQueryLogs
 
@@ -35,11 +37,13 @@ type lstreamCmdCtx struct {
 	// includes errors printed by the nerdlog_agent.sh (lines starting from
 	// "error:", on either stderr or stdout), as well as any errors generated
 	// on the Go side, e.g. failure to parse some other output.
+	// 当前命令执行出错的信息汇总
 	errs []error
 
+	// 当前命令执行 echo exit_code:xx 的结果
 	exitCode string
 
-	// unhandledStdout and unhandledStderr contain the lines which the Go app did
+	//  unhandledStdout and unhandledStderr contain the lines which the Go app did
 	// not make sense of. These are usually ignored, but if the the
 	// nerdlog_agent.sh returns an error code, and there are no specific errors
 	// printed (lines with the "error:" prefix), then we'll print all these
@@ -57,14 +61,18 @@ type lstreamCmdRes struct {
 
 type lstreamCmdBootstrap struct{}
 
+// bootstrap 命令上下文
 type lstreamCmdCtxBootstrap struct {
+	// 读取到成功的标识位，当读取到 bootstrap ok 时，更新标志位
 	receivedSuccess bool
+	// 读取到失败的标识位，当读取到 bootstrap failed
 	receivedFailure bool
 
 	// warnJournalctlNoAdminAccess is set to true if journalctl is used and the
 	// user doesn't have access to all the system logs. It's a separate bool
 	// instead of a generic warning message to make it possible to suppress it
 	// with a flag.
+	// 告警Journactl没有admin权限的标识位
 	warnJournalctlNoAdminAccess bool
 }
 
@@ -98,8 +106,9 @@ type lstreamCmdQueryLogs struct {
 }
 
 type lstreamCmdCtxQueryLogs struct {
+	//
 	Resp *LogResp
-
+	// 该 log stream 所获取的所有文件
 	logfiles []logfileWithStartingLinenumber
 	lastTime time.Time
 }

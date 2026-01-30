@@ -38,7 +38,7 @@
     </mxGraphModel>
   </diagram>
   <diagram id="Ydvnq4tCoAYVsE_U79uu" name="logstream client">
-    <mxGraphModel dx="530" dy="1044" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+    <mxGraphModel dx="1552" dy="1042" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
@@ -60,17 +60,35 @@
         <mxCell id="PNkzGyY45ULT1jIf-S2b-7" value="&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;1.开始使用transport发起连接&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;fontSize=14;" vertex="1" parent="1">
           <mxGeometry x="640" y="320" width="280" height="160" as="geometry" />
         </mxCell>
-        <mxCell id="PNkzGyY45ULT1jIf-S2b-8" value="LStreamClientStateDisconnected" style="rounded=1;whiteSpace=wrap;html=1;fontSize=16;labelBorderColor=none;labelBackgroundColor=none;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+        <mxCell id="PNkzGyY45ULT1jIf-S2b-8" value="LStreamClientStateDisconnected" style="rounded=1;whiteSpace=wrap;html=1;fontSize=16;labelBorderColor=none;labelBackgroundColor=none;fillColor=#d80073;strokeColor=#A50040;fontColor=#ffffff;" vertex="1" parent="1">
           <mxGeometry x="1000" y="210" width="280" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="PNkzGyY45ULT1jIf-S2b-9" value="&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;1.底层transport处于某些原因无法连接成功后的结果&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;fontSize=14;" vertex="1" parent="1">
+        <mxCell id="PNkzGyY45ULT1jIf-S2b-9" value="&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;1.底层transport处于某些原因无法连接成功后的结果&lt;/div&gt;&lt;div&gt;2.logstream client 会在2s后进行重连&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;fontSize=14;" vertex="1" parent="1">
           <mxGeometry x="1000" y="320" width="280" height="160" as="geometry" />
         </mxCell>
-        <mxCell id="PNkzGyY45ULT1jIf-S2b-10" value="LStreamClientStateConnectedIdle" style="rounded=1;whiteSpace=wrap;html=1;fontSize=16;labelBorderColor=none;labelBackgroundColor=none;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+        <mxCell id="PNkzGyY45ULT1jIf-S2b-10" value="LStreamClientStateConnectedIdle" style="rounded=1;whiteSpace=wrap;html=1;fontSize=16;labelBorderColor=none;labelBackgroundColor=none;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
           <mxGeometry x="1000" y="530" width="280" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="PNkzGyY45ULT1jIf-S2b-11" value="&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;1.开始使用transport发起连接&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;fontSize=14;" vertex="1" parent="1">
+        <mxCell id="PNkzGyY45ULT1jIf-S2b-11" value="&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;1.底层transport连接成功后的结果&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;fontSize=14;" vertex="1" parent="1">
           <mxGeometry x="1000" y="640" width="280" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="PNkzGyY45ULT1jIf-S2b-12" value="LStreamClientStateConnectedBusy" style="rounded=1;whiteSpace=wrap;html=1;fontSize=16;labelBorderColor=none;labelBackgroundColor=none;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="1360" y="530" width="280" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="PNkzGyY45ULT1jIf-S2b-13" value="&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;1.从ConnectedIdle状态开始执行 bootstrap / ping / queryLogs 开始后变为的状态&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="1360" y="640" width="280" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="PNkzGyY45ULT1jIf-S2b-14" value="LStreamClientStateConnectedIdle" style="rounded=1;whiteSpace=wrap;html=1;fontSize=16;labelBorderColor=none;labelBackgroundColor=none;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="1720" y="530" width="280" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="PNkzGyY45ULT1jIf-S2b-15" value="&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;1.发送bootstrap的命令解析成功&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="1720" y="640" width="280" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="PNkzGyY45ULT1jIf-S2b-16" value="LStreamClientStateDisconnected" style="rounded=1;whiteSpace=wrap;html=1;fontSize=16;labelBorderColor=none;labelBackgroundColor=none;fillColor=#d80073;strokeColor=#A50040;fontColor=#ffffff;" vertex="1" parent="1">
+          <mxGeometry x="1720" y="850" width="280" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="PNkzGyY45ULT1jIf-S2b-17" value="&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;1.bootstrap 响应解析出错&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="1720" y="960" width="280" height="160" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
