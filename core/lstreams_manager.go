@@ -21,20 +21,22 @@ var ErrNotYetConnected = errors.Errorf("not connected to all lstreams yet")
 type LStreamsManager struct {
 	// 入参
 	params LStreamsManagerParams
-	// 解析后的 logstreams 字符串
+	// 原始的 --lstreams 字符串
 	lstreamsStr string
-	// 解析后的 logstreams 列表
+	// 从 --lstreams 解析后的 logstreams 列表
 	parsedLogStreams map[string]LogStream
-	// log stream 客户端列表
+	// 基于已解析的 log streams 列表（parsedLogStreams）而创建 log stream client
 	lscs map[string]*LStreamClient
 	// log stream 客户端状态列表
 	lscStates map[string]LStreamClientState
 	// lscConnDetails contains items for all selected lstreams, even after the
 	// connection is done (which is indicated by ConnDetails.Connected being
 	// true).
+	// log stream 的连接时信息
 	lscConnDetails map[string]ConnDetails
 	// lscBusyStages only contains items for lstreams which are in the
 	// LStreamClientStateConnectedBusy state.
+	// log stream 的繁忙状态
 	lscBusyStages map[string]BusyStage
 
 	// lscPendingTeardown contains info about LStreamClient-s that are being torn
@@ -46,6 +48,8 @@ type LStreamsManager struct {
 	lscPendingTeardown map[string]int
 
 	lstreamsByState map[LStreamClientState]map[string]struct{}
+
+	// 未连接的数量
 	numNotConnected int
 
 	lstreamUpdatesCh chan *LStreamClientUpdate
@@ -93,6 +97,7 @@ type LStreamsManagerParams struct {
 	// files when using the tool concurrently on the same nodes.
 	ClientID string
 
+	// 上游接收信息
 	UpdatesCh chan<- LStreamsManagerUpdate
 
 	Clock clock.Clock
@@ -137,18 +142,21 @@ func NewLStreamsManager(params LStreamsManagerParams) *LStreamsManager {
 		panic("setLStreams didn't like the initial logStreamsSpec: " + err.Error())
 	}
 
-	// 更新 HA 列表，本质上是更新 logstream clients 列表和状态
+	// 此处主要是根据 parsedLogStreams 来创建log stream client 连接
 	lsman.updateHAs()
-	// 统计各个状态的 logstream client 列表，并统计未连接的 logstream client 数量
+	// 因为此时并没有log stream client的连接状态还保存在channel中，并未消费，
+	// 因此此时只是用于初始化 lstreamsByState 和 numNotConnected
 	lsman.updateLStreamsByState()
-	// 发送状态更新
+	// 此时将状态通知到上游，还上一个类似，此时并没有log stream client的连接状态还保存在channel中，并未消费，
+	// 因此此时只是将之前的状态投送给上游
 	lsman.sendStateUpdate()
-	// 启动管理器的运行，主要是处理channel中的请求
+	// goroutines 异步启动
 	go lsman.run()
 
 	return lsman
 }
 
+// 处理页面设置
 func (lsman *LStreamsManager) SetDefaultTransportMode(defaultTransportMode *TransportMode) {
 	resCh := make(chan struct{}, 1)
 
@@ -162,6 +170,7 @@ func (lsman *LStreamsManager) SetDefaultTransportMode(defaultTransportMode *Tran
 	<-resCh
 }
 
+// 更新 log stream client 的 transport mode
 func (lsman *LStreamsManager) setDefaultTransportMode(defaultTransportMode *TransportMode) {
 	// If unchanged, then do nothing.
 	if lsman.defaultTransportMode == defaultTransportMode {
@@ -173,21 +182,24 @@ func (lsman *LStreamsManager) setDefaultTransportMode(defaultTransportMode *Tran
 	lsman.defaultTransportMode = defaultTransportMode
 
 	lstreamsStr := lsman.lstreamsStr
+	// 先清理所有的连接
 	lsman.setLStreams("")
 	lsman.updateHAs()
 	lsman.updateLStreamsByState()
 
+	// 重建所有的连接
 	lsman.setLStreams(lstreamsStr)
 	lsman.updateHAs()
 	lsman.updateLStreamsByState()
 
+	// 将最新的状态发送给上游
 	lsman.sendStateUpdate()
 }
 
 // LocalShellCommand is used when the host is "localhost".
 const LocalShellCommand = "/bin/sh"
 
-// 将 --lstreams 更新到 LStreamsManager 中
+// 解析，将 --lstreams 更新到 LStreamsManager 中
 func (lsman *LStreamsManager) setLStreams(lstreamsStr string) error {
 	// 获取当前用户
 	u, err := user.Current()
@@ -212,12 +224,16 @@ func (lsman *LStreamsManager) setLStreams(lstreamsStr string) error {
 	}
 
 	// All went well, remember the logstreams spec
+	// 保留原始字符串
 	lsman.lstreamsStr = lstreamsStr
+	// 保存解析后的结果
 	lsman.parsedLogStreams = parsedLogStreams
 
 	return nil
 }
 
+// parsedLogStreams 作为基准来更新 lscs，如果已经不在 parsedLogStreams 中存在，则移除；
+// 反之，检查其是否已经连接，未连接则开始连接
 func (lsman *LStreamsManager) updateHAs() {
 	// Close unused logstream clients
 	// 关闭不再使用的 logstream clients
@@ -248,7 +264,7 @@ func (lsman *LStreamsManager) updateHAs() {
 	}
 
 	// Create new logstream clients
-	// 创建新的 logstream clients
+	// 基于解析后的 --lstreams 创建 log stream clients
 	for key, ls := range lsman.parsedLogStreams {
 		// 检查该 logstream client 是否已经存在，如果存在，则跳过
 		if _, ok := lsman.lscs[key]; ok {
@@ -257,13 +273,13 @@ func (lsman *LStreamsManager) updateHAs() {
 		}
 
 		// We need to create a new logstream client
-		// 需要创建一个新的 logstream client
+		// 需要创建一个新的 logstream client，并在后台开始连接
 		lsc := NewLStreamClient(LStreamClientParams{
 			LogStream: ls,
 			SSHKeys:   lsman.params.SSHKeys,
 			Logger:    lsman.params.Logger,
-			ClientID:  lsman.params.ClientID, //fmt.Sprintf("%s-%d", lsman.params.ClientID, rand.Int()),
-			UpdatesCh: lsman.lstreamUpdatesCh,
+			ClientID:  lsman.params.ClientID,  //fmt.Sprintf("%s-%d", lsman.params.ClientID, rand.Int()),
+			UpdatesCh: lsman.lstreamUpdatesCh, // 接收log stream client 状态变更
 			Clock:     lsman.params.Clock,
 		})
 		// 保存 logstream client 信息
@@ -283,9 +299,10 @@ func (lsman *LStreamsManager) run() {
 		}
 	}
 
+	// 针对通道进行处理
 	for {
 		select {
-		// 处理 logstream client 的更新请求
+		// 处理来自log stream client 的状态更新通知
 		case upd := <-lsman.lstreamUpdatesCh:
 			if upd.State != nil { // 处理状态更新
 				// 仅处理已知的 logstream client 的状态更新
@@ -299,7 +316,7 @@ func (lsman *LStreamsManager) run() {
 					lsman.lscStates[upd.Name] = upd.State.NewState
 
 					// Maintain lsman.lscConnDetails
-					// 如果新状态为已连接闲置或已连接繁忙，则标识为已连接
+					// 如果是已连接状态，则更新该log stream的连接=true
 					if upd.State.NewState == LStreamClientStateConnectedIdle ||
 						upd.State.NewState == LStreamClientStateConnectedBusy {
 						cd := lsman.lscConnDetails[upd.Name]
@@ -308,7 +325,7 @@ func (lsman *LStreamsManager) run() {
 					}
 
 					// Maintain lsman.lscBusyStages
-					// 如果新状态非已连接繁忙，则删除繁忙阶段信息
+					// 非繁忙状态，则更新繁忙中的log stream
 					if upd.State.NewState != LStreamClientStateConnectedBusy {
 						delete(lsman.lscBusyStages, upd.Name)
 					}
@@ -326,16 +343,16 @@ func (lsman *LStreamsManager) run() {
 
 				// 统计各个状态的 logstream client 列表，并统计未连接的 logstream client 数量
 				lsman.updateLStreamsByState()
-				// 发送状态更新
+				// 发送状态更新到上游
 				lsman.sendStateUpdate()
-			} else if upd.ConnDetails != nil { // 处理连接详情更新
+			} else if upd.ConnDetails != nil { // 处理连接详情更新，主要是 Connecting 中的连接信息
 				lsman.params.Logger.Verbose1f("ConnDetails for %s: %+v", upd.Name, *upd.ConnDetails)
-				lsman.lscConnDetails[upd.Name] = *upd.ConnDetails // 保存连接详情
-				lsman.sendStateUpdate()                           // 发送状态更新
-			} else if upd.BootstrapDetails != nil { // 处理引导详情更新
+				lsman.lscConnDetails[upd.Name] = *upd.ConnDetails // 保存最新连接详情
+				lsman.sendStateUpdate()                           // 发送状态更新到上游
+			} else if upd.BootstrapDetails != nil { // 处理引导详情更新，主要是 Connecting => ConnectedIdle 时触发的 bootstrap 命令
 				lsman.params.Logger.Verbose1f("BootstrapDetails for %s: %+v", upd.Name, *upd.BootstrapDetails)
 
-				// 发送引导问题更新
+				// 将引导信息发送给上游
 				upd := LStreamsManagerUpdate{
 					BootstrapIssue: &BootstrapIssue{
 						LStreamName: upd.Name,
@@ -344,12 +361,14 @@ func (lsman *LStreamsManager) run() {
 						WarnJournalctlNoAdminAccess: upd.BootstrapDetails.WarnJournalctlNoAdminAccess,
 					},
 				}
+
+				// 投递到上游的通知channel中
 				lsman.params.UpdatesCh <- upd
-			} else if upd.BusyStage != nil { // 处理繁忙阶段更新
-				lsman.lscBusyStages[upd.Name] = *upd.BusyStage
-				lsman.sendStateUpdate() // 发送状态更新
-			} else if upd.DataRequest != nil { // 处理数据请求更新
-				// 发送数据请求更新
+			} else if upd.BusyStage != nil { // 处理繁忙阶段更新，主要是 ConnectedBusy 处理的进展
+				lsman.lscBusyStages[upd.Name] = *upd.BusyStage // 保存最新的处理进展
+				lsman.sendStateUpdate()                        // 发送状态更新到上游
+			} else if upd.DataRequest != nil { // 处理数据请求更新，比如底层 log stream 连接时需要输入额外的信息时，会发送到页面上进行展示
+				// 发送数据请求更新到上游
 				lsman.params.UpdatesCh <- LStreamsManagerUpdate{
 					DataRequest: upd.DataRequest,
 				}
@@ -409,10 +428,12 @@ func (lsman *LStreamsManager) run() {
 				lsman.sendStateUpdate()
 			}
 
-		// 综合处理所有请求的入口
+		// 处理所有来自页面的请求操作
 		case req := <-lsman.reqCh:
 			switch {
+			// 处理查询日志请求
 			case req.queryLogs != nil:
+				// 当前没有可用的 log stream client，无法处理
 				if len(lsman.lscs) == 0 {
 					lsman.sendLogRespUpdate(&LogRespTotal{
 						Errs: []error{errors.Errorf("no matching lstreams to get logs from")},
@@ -420,6 +441,7 @@ func (lsman *LStreamsManager) run() {
 					continue
 				}
 
+				// 当前尚未连接好，无法处理
 				if lsman.numNotConnected > 0 {
 					lsman.sendLogRespUpdate(&LogRespTotal{
 						Errs: []error{ErrNotYetConnected},
@@ -427,6 +449,7 @@ func (lsman *LStreamsManager) run() {
 					continue
 				}
 
+				// 当前正在查询，无法处理
 				if lsman.curQueryLogsCtx != nil {
 					lsman.sendLogRespUpdate(&LogRespTotal{
 						Errs: []error{ErrBusyWithAnotherQuery},
@@ -434,29 +457,33 @@ func (lsman *LStreamsManager) run() {
 					continue
 				}
 
+				// 允许最大行的参数配置错误，无法处理
 				if req.queryLogs.MaxNumLines == 0 {
 					panic("req.queryLogs.MaxNumLines is zero")
 				}
 
+				//
 				lsman.curQueryLogsCtx = &manQueryLogsCtx{
 					req:       req.queryLogs,
 					startTime: lsman.params.Clock.Now(),
-					resps:     make(map[string]*LogResp, len(lsman.lscs)),
-					errs:      map[string]error{},
+					resps:     make(map[string]*LogResp, len(lsman.lscs)), // 存放各个log stream client响应结果
+					errs:      map[string]error{},                         // 存放各个log stream client错误
 				}
 
 				// sendStateUpdate must be done after setting curQueryLogsCtx.
+				// 将当前的log stream client信息发送给上游
 				lsman.sendStateUpdate()
 
 				for lstreamName, lsc := range lsman.lscs {
+					// 构建查询请求，核心参数：--max-num-lines, --from, --to, --query, --refresh-index
 					cmdQueryLogs := lstreamCmdQueryLogs{
-						maxNumLines: req.queryLogs.MaxNumLines,
+						maxNumLines: req.queryLogs.MaxNumLines, // 读取最大行数
 
-						from:  req.queryLogs.From,
-						to:    req.queryLogs.To,
-						query: req.queryLogs.Query,
+						from:  req.queryLogs.From,  // 起始行数
+						to:    req.queryLogs.To,    // 结束行数
+						query: req.queryLogs.Query, // awk 查询
 
-						refreshIndex: req.queryLogs.RefreshIndex,
+						refreshIndex: req.queryLogs.RefreshIndex, // 是否刷新索引
 					}
 
 					if req.queryLogs.LoadEarlier {
@@ -487,45 +514,52 @@ func (lsman *LStreamsManager) run() {
 						}
 					}
 
+					// 将请求发送到 log stream client
 					lsc.EnqueueCmd(lstreamCmd{
-						respCh:    lsman.respCh,
-						queryLogs: &cmdQueryLogs,
+						respCh:    lsman.respCh,  // 接收响应的通道
+						queryLogs: &cmdQueryLogs, // 请求内容
 					})
 				}
 
-			// 更新 lstreams 的请求
+			// 处理更新 lstreams 的请求
 			case req.updLStreams != nil:
 				// 获取 --lstreams
 				r := req.updLStreams
 				lsman.params.Logger.Infof("LStreams manager: update logstreams spec: %s", r.logStreamsSpec)
 
-				// 存在该值，代表当前有查询正在进行，此时不允许更新 lstreams,必须要等待查询结束后，才能更新
+				// 如果当前有查询正在进行，则不允许更新
 				if lsman.curQueryLogsCtx != nil {
 					r.resCh <- ErrBusyWithAnotherQuery
 					continue
 				}
 
-				// 设置
+				// 更新 lstreamStr 和 parsedLogStreams
 				if err := lsman.setLStreams(r.logStreamsSpec); err != nil {
 					r.resCh <- errors.Trace(err)
 					continue
 				}
 
+				// 重建 log stream client，去除不存在的log stream
 				lsman.updateHAs()
+				// 更新 log stream client 状态，此时可以同步更新
 				lsman.updateLStreamsByState()
+				// 将最新的 log stream client 发送给上游
 				lsman.sendStateUpdate()
 
+				//
 				r.resCh <- nil
 
+			// 处理更新 transport mode 的请求
 			case req.setDefaultTransportMode != nil:
 				r := req.setDefaultTransportMode
 				lsman.params.Logger.Infof("LStreams manager: setting defaultTransportMode: %s", r.defaultTransportMode.String())
 
+				// 关闭所有连接，并重新连接，然后将结果发送给上游
 				lsman.setDefaultTransportMode(r.defaultTransportMode)
 
 				r.resCh <- struct{}{}
 
-			// ping 请求
+			// 处理 ping 请求
 			case req.ping:
 				for _, lsc := range lsman.lscs {
 					// ping 入队
@@ -534,12 +568,16 @@ func (lsman *LStreamsManager) run() {
 					})
 				}
 
+			// 处理 reconnect 请求
 			case req.reconnect:
 				lsman.params.Logger.Infof("Reconnect command")
+				// 如果当前有查询正在进行，则清空并强制关闭
 				if lsman.curQueryLogsCtx != nil {
 					lsman.params.Logger.Infof("Forgetting the in-progress query")
 					lsman.curQueryLogsCtx = nil
 				}
+
+				// 重连，仅在通道未满的情况下才会执行
 				for _, lsc := range lsman.lscs {
 					lsc.Reconnect()
 				}
@@ -553,26 +591,29 @@ func (lsman *LStreamsManager) run() {
 			case req.disconnect:
 				// 打印日志
 				lsman.params.Logger.Infof("Disconnect command")
-				//
+				// 清除当前查询上下文
 				if lsman.curQueryLogsCtx != nil {
 					lsman.params.Logger.Infof("Forgetting the in-progress query")
 					lsman.curQueryLogsCtx = nil
 				}
-				// 置空
+				// 将 lstreamStr 和 parsedLogStreamStr 置为空
 				lsman.setLStreams("")
 
+				// 关闭使用中的连接，并清除
 				lsman.updateHAs()
+				// 同步更新状态
 				lsman.updateLStreamsByState()
+				// 将状态信息送给上游
 				lsman.sendStateUpdate()
 			}
 
-		// 接收请求的响应
+		// 接收请求的响应，仅处理 querylogs 的响应
 		case resp := <-lsman.respCh:
 			// 写入 verbose1 日志
 			lsman.params.Logger.Verbose1f("Got a response from %v: %+v", resp.hostname, resp)
 
 			switch {
-			// 处理查询日志的响应
+			// 处理查询日志的响应，由 reqCh#queryLogs 发起
 			case lsman.curQueryLogsCtx != nil:
 				// 存在报错，则写入日志并记录
 				if resp.err != nil {
@@ -588,7 +629,7 @@ func (lsman *LStreamsManager) run() {
 					lsman.curQueryLogsCtx.resps[resp.hostname] = v
 
 					// If we collected responses from all nodes, handle them.
-					// 如果已经从所有的节点获取了信息，则开始处理
+					// 如果已经从所有的节点获取了信息，则需要合并消息，并发送给前端
 					if len(lsman.curQueryLogsCtx.resps) == len(lsman.lscs) {
 						// 写入 verbose1 日志
 						lsman.params.Logger.Verbose1f(
@@ -602,6 +643,7 @@ func (lsman *LStreamsManager) run() {
 						lsman.curQueryLogsCtx = nil
 
 						// sendStateUpdate must be done after setting curQueryLogsCtx.
+						// 将状态同步给上游
 						lsman.sendStateUpdate()
 					} else {
 						lsman.params.Logger.Verbose1f(
@@ -624,11 +666,11 @@ func (lsman *LStreamsManager) run() {
 			lsman.params.Logger.Infof("LStreamsManager teardown is started")
 			// 标识正在关闭
 			lsman.tearingDown = true
-			// 置空 lstreams
+			// 置空 lstreamStr 和 parsedLogStreams
 			lsman.setLStreams("")
-			// 更新 HA 列表，本质上是更新 logstream clients 列表和状态
+			// 更新，因为上一个设置了 ""，因此此处将清除所有的 lscs，以及关闭所有的client
 			lsman.updateHAs()
-			// 统计各个状态的 logstream client 列表，并统计未连接的 logstream client 数量
+			// 更新状态
 			lsman.updateLStreamsByState()
 
 			// Check if we don't need to wait for anything, and can teardown right away.
@@ -656,6 +698,7 @@ type timeAndNumMsgs struct {
 	numMsgs int
 }
 
+// 从最早的消息中提取其数量
 func getEarliestTimeAndNumMsgs(logs []LogMsg) *timeAndNumMsgs {
 	if len(logs) == 0 {
 		return nil
@@ -666,6 +709,7 @@ func getEarliestTimeAndNumMsgs(logs []LogMsg) *timeAndNumMsgs {
 		numMsgs: 1,
 	}
 
+	// 比较时间一致的日期，统计其数量
 	for _, logMsg := range logs[1:] {
 		if !logMsg.Time.Equal(ret.time) {
 			break
@@ -688,7 +732,6 @@ func (lsman *LStreamsManager) getNumLStreamClientsTearingDown() int {
 
 // Close initiates the shutdown. It doesn't wait for the shutdown to complete;
 // use Wait for it.
-// 
 func (lsman *LStreamsManager) Close() {
 	select {
 	case lsman.teardownReqCh <- struct{}{}:
@@ -703,13 +746,18 @@ func (lsman *LStreamsManager) Wait() {
 
 type lstreamsManagerReq struct {
 	// Exactly one field must be non-nil
-
-	queryLogs               *QueryLogsParams
-	updLStreams             *lstreamsManagerReqUpdLStreams
+	// 用于页面发起的 query logs 请求
+	queryLogs *QueryLogsParams
+	// 用于页面修改数据后，发起更新的请求
+	updLStreams *lstreamsManagerReqUpdLStreams
+	// 用于页面切换transport mode的请求
 	setDefaultTransportMode *lstreamsManagerReqSetDefaultTransportMode
-	ping                    bool
-	reconnect               bool
-	disconnect              bool
+	// 用于页面发起的 ping 请求
+	ping bool
+	// 用于页面发起的 reconnect 请求
+	reconnect bool
+	// 用于页面发起的 disconnect 请求
+	disconnect bool
 }
 
 type lstreamsManagerReqUpdLStreams struct {
@@ -722,6 +770,7 @@ type lstreamsManagerReqSetDefaultTransportMode struct {
 	resCh                chan<- struct{}
 }
 
+// 处理页面发起日志查询的请求
 func (lsman *LStreamsManager) QueryLogs(params QueryLogsParams) {
 	// 以 verbose1 级别写入到日志中
 	lsman.params.Logger.Verbose1f("QueryLogs: %+v", params)
@@ -731,7 +780,7 @@ func (lsman *LStreamsManager) QueryLogs(params QueryLogsParams) {
 	}
 }
 
-// 将 --lstreams 解析，并更新到 LStreamsManager
+// 处理页面发起的 --lstreams 更新
 func (lsman *LStreamsManager) SetLStreams(logStreamsSpec string) error {
 	// 构造一个允许保存单个错误的chan
 	resCh := make(chan error, 1)
@@ -749,12 +798,14 @@ func (lsman *LStreamsManager) SetLStreams(logStreamsSpec string) error {
 	return <-resCh
 }
 
+// 处理页面发起的 Ping 请求
 func (lsman *LStreamsManager) Ping() {
 	lsman.reqCh <- lstreamsManagerReq{
 		ping: true,
 	}
 }
 
+// 处理页面发起的 Reconnect 请求
 func (lsman *LStreamsManager) Reconnect() {
 	// 发送重新连接请求
 	lsman.reqCh <- lstreamsManagerReq{
@@ -762,6 +813,7 @@ func (lsman *LStreamsManager) Reconnect() {
 	}
 }
 
+// 处理页面发起的 Disconnect 请求
 func (lsman *LStreamsManager) Disconnect() {
 	// 发送断开连接请求
 	lsman.reqCh <- lstreamsManagerReq{
@@ -918,38 +970,43 @@ func (lsman *LStreamsManager) sendStateUpdate() {
 		},
 	}
 
-	// 发送更新内容到 channel
+	// 发送更新内容到 上游
 	lsman.params.UpdatesCh <- upd
 }
 
 func (lsman *LStreamsManager) sendLogRespUpdate(resp *LogRespTotal) {
+	// 如果当前查询尚未结束，则计算查询间隔
 	if lsman.curQueryLogsCtx != nil {
 		resp.QueryDur = time.Since(lsman.curQueryLogsCtx.startTime)
 	}
 
+	// 通知上游
 	lsman.params.UpdatesCh <- LStreamsManagerUpdate{
 		LogResp: resp,
 	}
 }
 
+// 合并日期并发送到
 func (lsman *LStreamsManager) mergeLogRespsAndSend() {
 	// 获取所有的响应
 	resps := lsman.curQueryLogsCtx.resps
 	// 获取所有的错误
 	errs := lsman.curQueryLogsCtx.errs
 
-	// 处理错误，
+	// 合并错误
 	if len(errs) != 0 {
 		errs2 := make([]error, 0, len(errs))
+		// 追加错误
 		for hostname, err := range errs {
 			errs2 = append(errs2, errors.Annotatef(err, "%s", hostname))
 		}
 
+		// 按照hostname+err进行升序排序
 		sort.Slice(errs2, func(i, j int) bool {
 			return errs2[i].Error() < errs2[j].Error()
 		})
 
-		// 发送响应
+		// 发送响应给上游
 		lsman.sendLogRespUpdate(&LogRespTotal{
 			Errs: errs2,
 		})
@@ -960,40 +1017,53 @@ func (lsman *LStreamsManager) mergeLogRespsAndSend() {
 	// If we're not adding to already existing logs, reset w/e we've had already,
 	// and calculate minuteStats from the resps.
 	if !lsman.curQueryLogsCtx.req.LoadEarlier {
+		// 构造保存日志的映射
 		lsman.curLogs = manLogsCtx{
 			minuteStats: map[int64]MinuteStatsItem{},
 			perNode:     map[string]*manLogsNodeCtx{},
 		}
 
+		// 遍历日志及其节点
 		for nodeName, resp := range resps {
+			// 获取分钟统计
 			for k, v := range resp.MinuteStats {
+				// 统计日志条数
 				lsman.curLogs.minuteStats[k] = MinuteStatsItem{
 					NumMsgs: lsman.curLogs.minuteStats[k].NumMsgs + v.NumMsgs,
 				}
 
+				// 累加总条数
 				lsman.curLogs.numMsgsTotal += v.NumMsgs
+				写入日志
 			}
 
+			// 保存日志
 			lsman.curLogs.perNode[nodeName] = &manLogsNodeCtx{
 				logs:          resp.Logs,
-				isMaxNumLines: len(resp.Logs) == lsman.curQueryLogsCtx.req.MaxNumLines,
+				isMaxNumLines: len(resp.Logs) == lsman.curQueryLogsCtx.req.MaxNumLines, // 检查其是否超过最大行数
 			}
 		}
 	} else {
 		// Add to existing logs
+		// 因为此场景是为了获取更早的日志，因此需要保留已有的日志，此时需要将日志进行合并
 		for nodeName, resp := range resps {
+			// 获取节点
 			pn := lsman.curLogs.perNode[nodeName]
+			// 将已有日志追加到之后
 			pn.logs = append(resp.Logs, pn.logs...)
+			// 检查是否超过最大行数
 			pn.isMaxNumLines = len(resp.Logs) == lsman.curQueryLogsCtx.req.MaxNumLines
 		}
 	}
 
 	// Collect debug info
+	// 收集响应中的 debug 信息
 	debugInfo := make(map[string]LogstreamDebugInfo, len(resps))
 	for lstreamName, resp := range resps {
 		debugInfo[lstreamName] = resp.DebugInfo
 	}
 
+	// 构造结果
 	ret := &LogRespTotal{
 		MinuteStats:   lsman.curLogs.minuteStats,
 		NumMsgsTotal:  lsman.curLogs.numMsgsTotal,
@@ -1029,9 +1099,11 @@ func (lsman *LStreamsManager) mergeLogRespsAndSend() {
 	})
 	ret.Logs = ret.Logs[coveredSinceIdx:]
 
+	// 将更新发送到上游
 	lsman.sendLogRespUpdate(ret)
 }
 
+// 生成指定长度的随机字符串
 func (lsman *LStreamsManager) randomString(length int) string {
 	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 

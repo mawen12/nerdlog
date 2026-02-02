@@ -259,7 +259,7 @@ func (app *nerdlogApp) initLStreamsManager(
 	homeDir string,
 	logger *log.Logger,
 ) error {
-	// logstreams manager 更新事件
+	// 用于接收 logstreams manager 更新事件
 	updatesCh := make(chan core.LStreamsManagerUpdate, 128)
 	// 启动 goroutine
 	go func() {
@@ -277,11 +277,15 @@ func (app *nerdlogApp) initLStreamsManager(
 
 		handleUpdate := func(upd core.LStreamsManagerUpdate) {
 			switch {
+			// 处理状态更新，仅保留最后的状态，丢弃中间状态
 			case upd.State != nil:
 				lastState = upd.State
+			// 处理日志查询结果，将内容追加到其之后
 			case upd.LogResp != nil:
 				logResps = append(logResps, upd.LogResp)
+			// 处理启动报错信息
 			case upd.BootstrapIssue != nil:
+				// 统计启动报错
 				if upd.BootstrapIssue.Err != "" {
 					bootstrapErrors = append(
 						bootstrapErrors,
@@ -289,6 +293,7 @@ func (app *nerdlogApp) initLStreamsManager(
 					)
 				}
 
+				// 统计警告
 				if upd.BootstrapIssue.WarnJournalctlNoAdminAccess && !params.noJournalctlAccessWarn {
 					bootstrapWarnings = append(
 						bootstrapWarnings,
@@ -296,7 +301,9 @@ func (app *nerdlogApp) initLStreamsManager(
 					)
 				}
 
+			// 处理数据请求	
 			case upd.DataRequest != nil:
+				// 统计数据请求
 				dataRequests = append(dataRequests, upd.DataRequest)
 
 			default:
@@ -306,15 +313,18 @@ func (app *nerdlogApp) initLStreamsManager(
 
 		for {
 			select {
+			// 收到更新时，处理更新	
 			case upd := <-updatesCh:
 				handleUpdate(upd)
-
+			// 通道繁忙时，或这没有更新时，执行一下逻辑
 			default:
 				// If anything has changed, update the UI.
 				//
 				// The tviewApp might be nil here if the TUI app has finished, but we're
 				// still receiving updates during the teardown; so if that's the case,
 				// just don't update the TUI.
+				
+				// 正在启动阶段，此时 tviewApp 尚不为 nil
 				if app.tviewApp != nil &&
 					(lastState != nil ||
 						len(logResps) > 0 ||
@@ -322,11 +332,14 @@ func (app *nerdlogApp) initLStreamsManager(
 						len(bootstrapWarnings) > 0 ||
 						len(dataRequests) > 0) {
 
+						
 					app.tviewApp.QueueUpdateDraw(func() {
+						// 展示状态
 						if lastState != nil {
 							app.mainView.applyHMState(lastState)
 						}
 
+						// 展示查询 
 						for _, logResp := range logResps {
 							if len(logResp.Errs) > 0 {
 								app.mainView.handleQueryError(combineErrors(logResp.Errs))
@@ -337,14 +350,17 @@ func (app *nerdlogApp) initLStreamsManager(
 							app.lastLogResp = logResp
 						}
 
+						// 展示启动错误
 						if len(bootstrapErrors) > 0 {
 							app.mainView.handleBootstrapError(combineErrors(bootstrapErrors))
 						}
 
+						// 展示启动警告
 						if len(bootstrapWarnings) > 0 {
 							app.mainView.handleBootstrapWarning(combineErrors(bootstrapWarnings))
 						}
 
+						// 展示数据请求内容
 						for _, dataReq := range dataRequests {
 							app.mainView.handleDataRequest(dataReq)
 						}
@@ -360,6 +376,7 @@ func (app *nerdlogApp) initLStreamsManager(
 				// The same select again, but without the default case.
 				select {
 				case upd := <-updatesCh:
+					// 处理请求
 					handleUpdate(upd)
 				}
 			}

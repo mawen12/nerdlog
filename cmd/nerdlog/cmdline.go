@@ -48,7 +48,7 @@ func (app *nerdlogApp) handleCmd(cmd string) {
 		// 应用时间范围并执行查询
 		app.mainView.setTimeRange(ftr.From, ftr.To)
 		app.mainView.doQuery(doQueryParams{})
-	// 写入日志到文件
+	// 写入日志到文件，默认为 /tmp/last_nerdlog
 	case "w", "write":
 		//if len(parts) < 2 {
 		//app.printError(":write requires an argument: the filename to write")
@@ -70,7 +70,7 @@ func (app *nerdlogApp) handleCmd(cmd string) {
 			return
 		}
 
-		// 创建文件
+		// 创建文件，或覆盖文件
 		lfile, err := os.Create(fname)
 		if err != nil {
 			app.printError(fmt.Sprintf("Failed to open %s for writing: %s", fname, err))
@@ -97,6 +97,7 @@ func (app *nerdlogApp) handleCmd(cmd string) {
 			return
 		}
 
+		// 去除空格之后的第一部分
 		remaining := strings.TrimSpace(cmd[len(parts[0]):])
 		setRes, err := app.setOption(remaining)
 		if err != nil {

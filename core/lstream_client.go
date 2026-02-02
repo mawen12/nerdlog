@@ -234,9 +234,11 @@ type LStreamClientUpdate struct {
 
 	// 连接详情，这是在 Connecting 状态时，logstream client 的底层 transport 连接过程中出现的信息
 	ConnDetails *ConnDetails
-	//
+
+	// 在从 Connecting => ConnectedIdle 状态下时，发起的 Bootstrap 状态信息
 	BootstrapDetails *BootstrapDetails
-	//
+
+	// 展示 Log Stream 在 ConnectedBusy 状态下的处理进度
 	BusyStage *BusyStage
 
 	// 数据请求，这是在 Connecting 状态时,logstream client 的底层 transport 连接过程中需要用户输入额外的信息，以便连接继续下去
@@ -1148,6 +1150,8 @@ func (lsc *LStreamClient) EnqueueCmd(cmd lstreamCmd) {
 // 关闭初始化。它不会等待关闭完成；客户端代码需要等待相应的事件（TornDown：true）。
 //
 // 如果changeName非空，则LStreamClient的名称将被更新；这对于将此LStreamClient与可能存在的另一个具有相同（旧）名称的LStreamClient区分开来非常有用。
+
+// 该操作会在通道空闲（非阻塞状态）时加入通道
 func (lsc *LStreamClient) Close(changeName string) {
 	select {
 	// 发送断开连接请求到断开连接请求通道
@@ -1159,6 +1163,7 @@ func (lsc *LStreamClient) Close(changeName string) {
 	}
 }
 
+// 该操作会在通道空闲（非阻塞状态）时加入通道，如果通道已满
 func (lsc *LStreamClient) Reconnect() {
 	select {
 	case lsc.disconnectReqCh <- disconnectReq{

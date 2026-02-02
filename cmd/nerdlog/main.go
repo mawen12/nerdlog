@@ -116,7 +116,7 @@ func main() {
 		SelectQuery: initialSelectQuery, // select query --selquery
 	}
 
-	// 当不符合立即查询的条件时，即四要素数据均没有指定，则尝试从历史文件 /home/mawen/.nerdlog_query_history 中获取最近一条
+	// 当四要素数据均没有指定，则尝试从历史文件 /home/mawen/.nerdlog_query_history 中获取最近一条
 	if !connectRightAway {
 		// No query params were given, try to get the last one from the history.
 		// 获取历史记录中最新的一个

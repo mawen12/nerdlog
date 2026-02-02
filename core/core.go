@@ -35,6 +35,7 @@ type QueryLogsParams struct {
 }
 
 // LogResp is a log response from a single logstream
+// 单个主机消息和元信息
 type LogResp struct {
 	// MinuteStats is a map from the unix timestamp (in seconds) to the stats for
 	// the minute starting at this timestamp.
@@ -59,6 +60,7 @@ type LogstreamDebugInfo struct {
 
 // LogRespTotal is a log response from a LStreamsManager. It's merged from
 // multiple LogResp's and it also contains some extra field(s), e.g. LoadedEarlier.
+// 所有主机的消息和元信息的汇总
 type LogRespTotal struct {
 	// If LoadedEarlier is true, it means we've just loaded more logs instead of replacing
 	// the logs (the Logs slice still contains everything though).
@@ -66,14 +68,18 @@ type LogRespTotal struct {
 
 	// MinuteStats is a map from the unix timestamp (in seconds) to the stats for
 	// the minute starting at this timestamp.
+	// 查询的所有主机分钟级消息数
 	MinuteStats map[int64]MinuteStatsItem
 
+	// 查询的所有主机日志汇总
 	Logs []LogMsg
 
 	// NumMsgsTotal is the total number of messages in the time range (and
 	// included in MinuteStats). This number is usually larger than len(Logs).
+	// 查询的所有消息数
 	NumMsgsTotal int
 
+	// 查询过程中的错误汇总
 	Errs []error
 
 	// DebugInfo is a map from the logstream name to the corresponding debug info
@@ -81,6 +87,7 @@ type LogRespTotal struct {
 	DebugInfo map[string]LogstreamDebugInfo
 
 	// QueryDur shows how long the query took.
+	// 查询耗时
 	QueryDur time.Duration
 }
 
